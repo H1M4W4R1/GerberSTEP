@@ -32,7 +32,12 @@ jobs:
       - run: python scripts/build.py
       - name: Test bundled imports and STEP export
         shell: bash
-        run: '"dist/${{ matrix.target }}/GerberSTEP/${{ matrix.executable }}" --self-test "build/bundle-smoke.json"'
+        run: |
+          mkdir -p build/standalone-smoke
+          cp "dist/${{ matrix.target }}/${{ matrix.executable }}" build/standalone-smoke/
+          cd build/standalone-smoke
+          "./${{ matrix.executable }}" --self-test report.json
+          python -c "import json; assert json.load(open('report.json'))['ok']"
         env:
           QT_QPA_PLATFORM: offscreen
       - uses: actions/upload-artifact@v4

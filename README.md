@@ -179,11 +179,14 @@ Outputs:
 
 | Host | Executable | Portable archive |
 | --- | --- | --- |
-| Windows | `dist/windows/GerberSTEP/GerberSTEP.exe` | `dist/GerberSTEP-windows.zip` |
-| Linux | `dist/linux/GerberSTEP/GerberSTEP` | `dist/GerberSTEP-linux.tar.gz` |
+| Windows | `dist/windows/GerberSTEP.exe` | `dist/GerberSTEP-windows.zip` |
+| Linux | `dist/linux/GerberSTEP` | `dist/GerberSTEP-linux.tar.gz` |
 
-Distribute the entire folder, including `_internal`; the executable alone is not
-standalone. Python is bundled, as are Qt, CAD libraries, icons and the demo set.
+Distribute just the executable, or its archive. Python, Qt, CAD libraries, icons
+and the demo set are embedded; no Python installation or `_internal` folder is
+needed. The executable extracts its bundled dependencies to a temporary directory
+at startup, so launching can take longer than a folder build and requires free
+temporary disk space.
 Builds are unsigned. Linux requires working system OpenGL/EGL libraries and a Qt
 desktop platform; Ubuntu CI installs these dependencies in `.github/workflows/build.yml`.
 The Linux build targets Ubuntu 24.04 or a compatible/newer glibc environment.
