@@ -118,10 +118,10 @@ def test_step_roundtrip_has_separate_valid_solids(tmp_path):
     import cadquery as cq
     board = load_board(str(DEMO))
     parts = stack_components(board, Settings())
-    assembly = build_assembly(parts)
+    assembly = build_assembly(parts, add_monolith=False)
     assert len(assembly.children) == 7
     path = tmp_path / "demo.step"
-    export_step(parts, path)
+    export_step(parts, path, add_monolith=False)
     text = path.read_text()
     for part in parts:
         assert part.name in text

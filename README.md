@@ -47,6 +47,35 @@ plane as outer copper. Top coatings extend upward and bottom coatings downward.
 Their own thicknesses are retained, so solids can overlap in this mode. It is
 intended for the requested machining workflow. STEP components stay separate.
 
+## Precision and manufacturing body
+
+**Curve precision** controls the maximum chord error used to approximate circles
+and arcs in the outline, artwork and drill holes. It affects both preview and
+export geometry, not just display quality.
+
+| Preset | Chord error | Intended trade-off |
+| --- | --- | --- |
+| Low | 0.10 mm | Fewest faces and simplest machining paths |
+| Medium (default) | 0.05 mm | Balance of curve accuracy and face count |
+| High | 0.01 mm | Original accuracy; most faces |
+
+Changing precision rebuilds the open fabrication set in the background. Thickness,
+enabled layers, coating alignment and camera position are preserved. Larger chord
+errors visibly facet small holes and pads; choose the tolerance your job permits.
+
+**Add manufacturing monolith** is enabled by default. Export adds an extra component
+named `Manufacturing_Monolith`, containing one Boolean-fused copper/dielectric solid.
+It retains copper trace relief, outline cutouts and drill holes. Mask and silk are
+excluded. The original material components remain in the same STEP assembly.
+
+For machining, select `Manufacturing_Monolith` and hide the original layer components
+so the overlapping duplicates are not part of your machining model. The preview
+continues to show the material layers, without drawing a duplicate over them.
+Disable the checkbox to export only the original components. Disconnected boards
+or unconnected stacks cannot form one monolith; the app reports an error rather than
+silently exporting a multi-solid compound as a monolith. Fusion adds export time,
+particularly at High precision.
+
 ## Preview
 
 Switch between **3D** (drag to orbit, middle-drag to pan, scroll to zoom) and
@@ -78,7 +107,7 @@ window waits for that job before allowing closure.
 - Standard soldermask Gerbers represent **openings**, so mask material is their
   complement within the board. Material-positive mask files must be inverted
   upstream. Legacy `%IPNEG*%` files are rejected; use a modern RS-274X export.
-- Curves are polygonized with **0.01 mm chord tolerance**. STEP contains valid
+- Curves are polygonized with the **selected chord tolerance**. STEP contains valid
   extruded B-rep solids with faceted curves, not analytic cylindrical holes.
   This is a geometric reconstruction, not recovery of a manufacturer's stackup.
 
@@ -86,6 +115,7 @@ The assembly has one named, coloured component per material layer or dielectric
 section. Disconnected copper islands remain separate solids inside that layer's
 compound. Export validates each solid and writes through a temporary file so a
 failed CAD operation does not replace an existing destination file.
+When enabled, the manufacturing monolith is an additional fused component.
 
 ## Validation
 

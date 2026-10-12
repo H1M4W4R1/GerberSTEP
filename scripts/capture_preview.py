@@ -21,7 +21,7 @@ app.setStyle("Fusion")
 app.setStyleSheet(STYLE)
 window = MainWindow()
 window.show()
-board = load_board(str(root / "examples" / "demo"))
+board = load_board(str(root / "examples" / "demo"), tolerance=window.precision.currentData())
 cache = {id(board.outline): mesh_template(board.outline)}
 cache.update({id(layer.geometry): mesh_template(layer.geometry) for layer in board.layers})
 window.board_loaded((board, cache))

@@ -16,7 +16,7 @@ app = QApplication([])
 app.setWindowIcon(application_icon())
 app.setStyleSheet(STYLE)
 window = MainWindow()
-board = load_board(str(root / "examples/demo"))
+board = load_board(str(root / "examples/demo"), tolerance=window.precision.currentData())
 templates = {id(board.outline): mesh_template(board.outline)}
 templates.update({id(layer.geometry): mesh_template(layer.geometry) for layer in board.layers})
 window.board_loaded((board, templates))

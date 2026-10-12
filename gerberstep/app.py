@@ -240,7 +240,22 @@ class MainWindow(QMainWindow):
         self.notes = button("Import details", "fa5s.info-circle")
         self.notes.setEnabled(False)
         self.notes.clicked.connect(self.show_notes)
-        preview_layout.addWidget(self.notes, alignment=Qt.AlignmentFlag.AlignLeft)
+        export_options = QHBoxLayout()
+        export_options.addWidget(self.notes)
+        export_options.addStretch()
+        export_options.addWidget(label("Curve precision"))
+        self.precision = QComboBox()
+        for name, tolerance in [("Low · 0.10 mm", 0.1), ("Medium · 0.05 mm", 0.05), ("High · 0.01 mm", 0.01)]:
+            self.precision.addItem(name, tolerance)
+        self.precision.setCurrentIndex(1)
+        self.precision.setToolTip("Maximum curve chord error. Lower precision uses fewer faces for simpler machining paths. Changes rebuild the loaded board.")
+        self.precision.currentIndexChanged.connect(self.precision_changed)
+        export_options.addWidget(self.precision)
+        preview_layout.addLayout(export_options)
+        self.monolith = QCheckBox("Add manufacturing monolith (copper + dielectric)")
+        self.monolith.setChecked(True)
+        self.monolith.setToolTip("Adds one fused body named Manufacturing_Monolith to the STEP file. In Fusion, select that body and hide the original layers. Coatings remain separate.")
+        preview_layout.addWidget(self.monolith)
         split.addWidget(preview_panel)
         split.setSizes([350, 900])
         split.setChildrenCollapsible(False)
@@ -294,6 +309,8 @@ class MainWindow(QMainWindow):
         self.controls.setEnabled(False)
         self.open_button.setEnabled(False)
         self.folder_button.setEnabled(False)
+        self.precision.setEnabled(False)
+        self.monolith.setEnabled(False)
         self.progress.setRange(0, 0)
         self.progress.show()
         self.task = Task(function, self)
@@ -310,22 +327,38 @@ class MainWindow(QMainWindow):
         self.controls.setEnabled(True)
         self.open_button.setEnabled(True)
         self.folder_button.setEnabled(True)
+        self.precision.setEnabled(True)
+        self.monolith.setEnabled(True)
+        if self.board is not None:
+            # On a failed rebuild, the controls must still describe the retained board.
+            self.precision.blockSignals(True)
+            self.precision.setCurrentIndex(self.precision.findData(self.board.tolerance))
+            self.precision.blockSignals(False)
         self.export_button.setEnabled(self.board is not None)
         self.progress.hide()
 
-    def open_path(self, path):
+    def precision_changed(self):
+        if self.board is not None and self.board.source_path and self.task is None:
+            self.open_path(self.board.source_path, preserve=True)
+
+    def open_path(self, path, preserve=False):
+        tolerance = self.precision.currentData()
         def load(progress):
-            board = load_board(path, progress)
+            board = load_board(path, progress, tolerance=tolerance)
             progress("Preparing preview surfaces…")
             cache = {id(board.outline): mesh_template(board.outline)}
             for layer in board.layers:
                 cache[id(layer.geometry)] = mesh_template(layer.geometry)
             return board, cache
         self.statusBar().showMessage("Opening Gerber set…")
-        self.run_task(load, self.board_loaded)
+        self.run_task(load, lambda result: self.board_loaded(result, preserve=preserve))
 
-    def board_loaded(self, result):
+    def board_loaded(self, result, preserve=False):
+        previous = {name: (check.isChecked(), thickness.value()) for name, (check, thickness) in self.optional.items()} if preserve else {}
         self.board, cache = result
+        self.precision.blockSignals(True)
+        self.precision.setCurrentIndex(self.precision.findData(self.board.tolerance))
+        self.precision.blockSignals(False)
         self.optional.clear()
         while self.layer_layout.count():
             item = self.layer_layout.takeAt(0)
@@ -345,7 +378,10 @@ class MainWindow(QMainWindow):
                 check.setEnabled(False)
                 row_layout.addWidget(label("Required", "muted"))
             else:
-                thickness = spin(0.1)
+                enabled, value = previous.get(layer.name, (True, 0.1))
+                check.setChecked(enabled)
+                thickness = spin(value)
+                thickness.setEnabled(enabled)
                 thickness.setMaximumWidth(120)
                 row_layout.addWidget(thickness)
                 self.optional[layer.name] = check, thickness
@@ -359,7 +395,8 @@ class MainWindow(QMainWindow):
         self.board_title.setText(self.board.name)
         self.notes.setEnabled(True)
         self.refresh()
-        self.preview.fit()
+        if not preserve:
+            self.preview.fit()
         self.statusBar().showMessage(f"Loaded {len(self.board.layers)} material layers · Review Import details before export")
 
     def refresh(self, *_):
@@ -377,7 +414,7 @@ class MainWindow(QMainWindow):
         self.preview.set_components(self.components)
         x0, y0, x1, y1 = self.board.outline.bounds
         height = max(p.z+p.thickness for p in self.components)-min(p.z for p in self.components)
-        self.board_info.setText(f"{x1-x0:.2f} × {y1-y0:.2f} mm  ·  {height:.3f} mm stack  ·  {len(self.components)} components")
+        self.board_info.setText(f"{x1-x0:.2f} × {y1-y0:.2f} mm  ·  {height:.3f} mm stack  ·  {len(self.components)} layers  ·  {self.board.tolerance:g} mm precision")
 
     def change_view(self, *_):
         self.preview.mode = self.view_mode.currentText()
@@ -399,11 +436,13 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             path = dialog.selectedFiles()[0]
             parts = list(self.components)
-            self.run_task(lambda progress: export_step(parts, path, progress), self.export_done)
+            add_monolith = self.monolith.isChecked()
+            self.run_task(lambda progress: export_step(parts, path, progress, add_monolith=add_monolith), self.export_done)
 
     def export_done(self, path):
         self.statusBar().showMessage(f"STEP exported · {path}")
-        QMessageBox.information(self, "STEP assembly exported", f"Saved {len(self.components)} named components.\n\n{path}")
+        extra = "\nAdded Manufacturing_Monolith: select this body and hide the original layers for machining." if self.monolith.isChecked() else ""
+        QMessageBox.information(self, "STEP assembly exported", f"Saved {len(self.components)} layer components.{extra}\n\n{path}")
 
     def show_notes(self):
         if self.board:

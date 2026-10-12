@@ -24,6 +24,8 @@ class Board:
     outline: BaseGeometry
     layers: list[Layer]
     warnings: list[str] = field(default_factory=list)
+    tolerance: float = 0.01
+    source_path: str = ""
 
 
 @dataclass

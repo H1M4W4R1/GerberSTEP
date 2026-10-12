@@ -30,7 +30,14 @@ def clean(geometry):
     return unary_union(list(polygons(make_valid(geometry))))
 
 
-def primitive_geometry(primitive):
+def curve_segments(radius, tolerance):
+    if not math.isfinite(tolerance) or tolerance <= 0:
+        raise ValueError("Curve tolerance must be a positive finite number.")
+    minimum = 8 if tolerance <= TOLERANCE else 2
+    return max(minimum, math.ceil(math.pi / (4 * math.acos(max(-1, 1-tolerance/radius)))))
+
+
+def primitive_geometry(primitive, tolerance=TOLERANCE):
     # Handle rectangles ourselves: rotation must act on each corner separately.
     if isinstance(primitive, gp.Rectangle):
         c, s = math.cos(primitive.rotation), math.sin(primitive.rotation)
@@ -42,25 +49,25 @@ def primitive_geometry(primitive):
     if isinstance(primitive, gp.Circle):
         if primitive.r <= 0:
             return GeometryCollection()
-        n = max(8, math.ceil(math.pi / (4 * math.acos(max(-1, 1-TOLERANCE/primitive.r)))))
+        n = curve_segments(primitive.r, tolerance)
         return Point(primitive.x, primitive.y).buffer(primitive.r, quad_segs=n)
     if isinstance(primitive, (gp.Line, gp.Arc)):
         if primitive.width <= 0:
             return GeometryCollection()
         radius = primitive.width / 2
-        n = max(8, math.ceil(math.pi / (4 * math.acos(max(-1, 1-TOLERANCE/2/radius)))))
+        n = curve_segments(radius, tolerance/2)
         if isinstance(primitive, gp.Arc):
             points = list(approximate_arc(primitive.cx, primitive.cy, primitive.x1,
                           primitive.y1, primitive.x2, primitive.y2, primitive.clockwise,
-                          max_error=TOLERANCE/2))
+                          max_error=tolerance/2))
         else:
             points = [(primitive.x1, primitive.y1), (primitive.x2, primitive.y2)]
         return LineString(points).buffer(radius, quad_segs=n)
-    points = primitive.to_arc_poly().approximate_arcs(max_error=TOLERANCE).outline
+    points = primitive.to_arc_poly().approximate_arcs(max_error=tolerance).outline
     return clean(Polygon(points)) if len(points) >= 3 else GeometryCollection()
 
 
-def layer_geometry(cam):
+def layer_geometry(cam, tolerance=TOLERANCE):
     """Compose flashes locally so aperture holes do not erase prior artwork."""
     result = GeometryCollection()
     pending = []
@@ -69,7 +76,7 @@ def layer_geometry(cam):
         positive.polarity_dark = True
         shape = GeometryCollection()
         for primitive in positive.to_primitives(MM):
-            geom = primitive_geometry(primitive)
+            geom = primitive_geometry(primitive, tolerance)
             shape = shape.union(geom) if primitive.polarity_dark else shape.difference(geom)
         if obj.polarity_dark:
             pending.append(shape)
@@ -81,7 +88,7 @@ def layer_geometry(cam):
     return clean(result.union(unary_union(pending)))
 
 
-def board_outline(cam):
+def board_outline(cam, tolerance=TOLERANCE):
     segments, regions = [], []
     for obj in cam.objects:
         for primitive in obj.to_primitives(MM):
@@ -90,10 +97,10 @@ def board_outline(cam):
             elif isinstance(primitive, gp.Arc):
                 points = list(approximate_arc(primitive.cx, primitive.cy, primitive.x1,
                               primitive.y1, primitive.x2, primitive.y2, primitive.clockwise,
-                              max_error=TOLERANCE))
+                              max_error=tolerance))
                 segments.append(LineString(points))
             else:
-                regions.append(primitive_geometry(primitive))
+                regions.append(primitive_geometry(primitive, tolerance))
     outline = GeometryCollection()
     if segments:
         faces, cuts, dangles, invalid = polygonize_full(unary_union([
@@ -112,7 +119,9 @@ def board_outline(cam):
     return outline
 
 
-def load_board(path: str, progress=lambda message: None) -> Board:
+def load_board(path: str, progress=lambda message: None, *, tolerance=TOLERANCE) -> Board:
+    if not math.isfinite(tolerance) or tolerance <= 0:
+        raise ValueError("Curve tolerance must be a positive finite number.")
     source = Path(path)
     if source.is_file() and source.suffix.lower() != ".zip":
         source = source.parent  # selecting one Gerber loads its companion files
@@ -127,8 +136,8 @@ def load_board(path: str, progress=lambda message: None) -> Board:
                              f"Parser details: {exc}") from exc
         if stack.outline is None:
             raise ValueError("Missing board outline. Include a .gko, .gm1 or Edge_Cuts.gbr file in the Gerber folder.")
-        outline = board_outline(stack.outline.instance)
-        holes = unary_union([layer_geometry(drill.instance) for drill in stack.drill_layers])
+        outline = board_outline(stack.outline.instance, tolerance)
+        holes = unary_union([layer_geometry(drill.instance, tolerance) for drill in stack.drill_layers])
         substrate = clean(outline.difference(holes))
         layers = []
         notes = []
@@ -144,7 +153,7 @@ def load_board(path: str, progress=lambda message: None) -> Board:
             original = getattr(instance, "original_path", None)
             if original and Path(original).exists() and re.search(r"%IPNEG\*%", Path(original).read_text(errors="replace")):
                 raise ValueError(f"{Path(original).name}: legacy negative-image Gerber is unsupported. Re-export as RS-274X positive image.")
-            geom = layer_geometry(instance)
+            geom = layer_geometry(instance, tolerance)
             if kind == "mask":
                 geom = outline.difference(geom)  # standard mask Gerbers describe openings
             geom = clean(geom.intersection(substrate))
@@ -157,5 +166,5 @@ def load_board(path: str, progress=lambda message: None) -> Board:
         if substrate.is_empty:
             raise ValueError("The board outline is empty after drill subtraction.")
         notes.extend(str(item.message) for item in caught)
-        notes.append("Soldermask files are interpreted as openings. Curves use a 0.01 mm chord tolerance.")
-        return Board(stack.board_name or source.stem, substrate, layers, list(dict.fromkeys(notes)))
+        notes.append(f"Soldermask files are interpreted as openings. Curves use a {tolerance:g} mm chord tolerance.")
+        return Board(stack.board_name or source.stem, substrate, layers, list(dict.fromkeys(notes)), tolerance, str(source.resolve()))

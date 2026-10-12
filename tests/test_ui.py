@@ -31,6 +31,8 @@ def test_async_import_controls_and_preview(app):
     assert window.task is None
     assert window.export_button.isEnabled()
     assert len(window.components) == 7
+    assert window.monolith.isChecked()
+    assert window.board.tolerance == 0.05
     window.copper.setValue(0.05)
     assert all(p.thickness == 0.05 for p in window.components if p.kind == "copper")
     window.optional["Top_Silkscreen"][0].setChecked(False)
@@ -38,6 +40,19 @@ def test_async_import_controls_and_preview(app):
     window.coplanar.click()
     top_mask = next(p for p in window.components if p.name == "Top_Soldermask")
     assert top_mask.z == 1.6
+    window.optional["Bottom_Soldermask"][1].setValue(0.075)
+    window.precision.setCurrentIndex(0)
+    deadline = time.monotonic()+30
+    while window.task is not None and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert not errors
+    assert window.task is None
+    assert window.board.tolerance == 0.1
+    assert window.copper.value() == 0.05
+    assert window.coplanar.isChecked()
+    assert not window.optional["Top_Silkscreen"][0].isChecked()
+    assert window.optional["Bottom_Soldermask"][1].value() == 0.075
     window.view_mode.setCurrentText("2D")
     window.side.setCurrentText("Bottom")
     assert window.preview.bottom
