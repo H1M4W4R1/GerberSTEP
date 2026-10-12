@@ -63,7 +63,9 @@ stacked, regardless of this export-only option. STEP components stay separate.
 
 **Curve precision** controls the maximum chord error used to approximate circles
 and arcs in the outline, artwork and drill holes. It affects both preview and
-export geometry, not just display quality.
+export geometry, not just display quality. Round Excellon drill holes are an
+exception: STEP always exports their exact diameters with cylindrical walls,
+independent of preview precision, so CAM software can recognize them for drilling.
 
 | Preset | Chord error | Intended trade-off |
 | --- | --- | --- |
@@ -73,7 +75,8 @@ export geometry, not just display quality.
 
 Changing precision rebuilds the open fabrication set in the background. Thickness,
 enabled layers, coating alignment and camera position are preserved. Larger chord
-errors visibly facet small holes and pads; choose the tolerance your job permits.
+errors visibly facet small holes in the preview and pads in both preview and
+export; choose the tolerance your job permits.
 
 **Add manufacturing monolith** is enabled by default. Export adds an extra component
 named `Manufacturing_Monolith`, containing one Boolean-fused copper/dielectric solid.
@@ -83,6 +86,10 @@ excluded. The original material components remain in the same STEP assembly.
 For machining, select `Manufacturing_Monolith` and hide the original layer components
 so the overlapping duplicates are not part of your machining model. The preview
 continues to show the material layers, without drawing a duplicate over them.
+In Fusion's Drill operation, select a cylindrical hole wall on this body and use
+**Select Same Diameter** as needed. Files exported before analytic drill support
+must be re-exported and imported again; increasing precision alone does not turn
+their flat hole faces into cylinders.
 Disable the checkbox to export only the original components. Disconnected boards
 or unconnected stacks cannot form one monolith; the app reports an error rather than
 silently exporting a multi-solid compound as a monolith. Fusion adds export time,
@@ -102,7 +109,8 @@ colours are uploaded only when a material mesh changes. A working OpenGL driver
 is required for interactive 3D. Headless screenshot tests use the software path.
 
 Both previews use the same planar geometry and layer settings as the STEP
-export, except for the export-only coating alignment. Loading, geometry preparation and
+export, except for the export-only coating alignment and exact cylindrical drill
+walls. Loading, geometry preparation and
 STEP writing run in a worker thread. Controls are locked while a job runs; the
 window waits for that job before allowing closure.
 
@@ -121,8 +129,9 @@ window waits for that job before allowing closure.
 - Standard soldermask Gerbers represent **openings**, so mask material is their
   complement within the board. Material-positive mask files must be inverted
   upstream. Legacy `%IPNEG*%` files are rejected; use a modern RS-274X export.
-- Curves are polygonized with the **selected chord tolerance**. STEP contains valid
-  extruded B-rep solids with faceted curves, not analytic cylindrical holes.
+- Artwork, outlines and routed slots are polygonized with the **selected chord
+  tolerance**. Round Excellon drills retain their source centres and radii and
+  are cut as exact cylinders in every exported layer and the manufacturing body.
   This is a geometric reconstruction, not recovery of a manufacturer's stackup.
 
 The assembly has one named, coloured component per material layer or dielectric

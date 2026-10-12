@@ -7,9 +7,45 @@ from shapely.geometry import Point, box
 
 from gerberstep.export import build_assembly, export_step
 from gerberstep.geometry import load_board, polygons, primitive_geometry
-from gerberstep.model import Component, Settings, stack_components
+from gerberstep.model import Component, DrillHole, Settings, stack_components
 
 DEMO = Path(__file__).resolve().parents[1] / "examples" / "demo"
+
+
+@pytest.mark.parametrize("tolerance", [0.01, 0.05, 0.1])
+def test_drill_cylinders_survive_step_and_monolith(tmp_path, tolerance):
+    board = load_board(str(DEMO), tolerance=tolerance)
+    assert len(board.drill_holes) == 16
+    parts = stack_components(board, Settings())
+    assembly = build_assembly(parts)
+    for name in ("Dielectric_1", "Manufacturing_Monolith"):
+        path = tmp_path / f"{name}.step"
+        cq.exporters.export(assembly.objects[name].obj, str(path))
+        shape = cq.importers.importStep(str(path)).val()
+        assert shape.isValid()
+        cylinders = [f._geomAdaptor().Cylinder() for f in shape.Faces()
+                     if f.geomType() == "CYLINDER"]
+        assert len(cylinders) == 16
+        actual = sorted((c.Location().X(), c.Location().Y(), c.Radius()) for c in cylinders)
+        expected = sorted((h.x, h.y, h.radius) for h in board.drill_holes)
+        for got, want in zip(actual, expected):
+            assert got == pytest.approx(want)
+        for h in board.drill_holes:
+            assert not shape.isInside(cq.Vector(h.x, h.y, 0.8))
+
+
+def test_exact_drilling_preserves_edge_holes_and_cutouts():
+    import math
+    holes = [DrillHole(0, 5, 1), DrillHole(5, 5, 1)]
+    preview = box(0, 0, 10, 10).difference(box(7, 2, 8, 4))
+    for hole in holes:
+        preview = preview.difference(Point(hole.x, hole.y).buffer(hole.radius, quad_segs=2))
+    part = Component("Core", "dielectric", preview, 0, 1.6, holes)
+    solid = build_assembly([part]).objects["Core"].obj
+    assert solid.isValid()
+    assert solid.Volume() == pytest.approx((98 - 1.5*math.pi)*1.6)
+    assert not solid.isInside(cq.Vector(7.5, 3, 0.8))
+    assert sum(f.geomType() == "CYLINDER" for f in solid.Faces()) == 2
 
 
 def test_precision_reduces_faces_within_chord_tolerance():

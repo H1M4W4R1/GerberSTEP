@@ -12,7 +12,7 @@ from shapely import make_valid, set_precision
 from shapely.geometry import GeometryCollection, LineString, Point, Polygon
 from shapely.ops import polygonize_full, unary_union
 
-from .model import Board, Layer
+from .model import Board, DrillHole, Layer
 
 TOLERANCE = 0.01  # maximum curve chord error in mm
 
@@ -137,7 +137,14 @@ def load_board(path: str, progress=lambda message: None, *, tolerance=TOLERANCE)
         if stack.outline is None:
             raise ValueError("Missing board outline. Include a .gko, .gm1 or Edge_Cuts.gbr file in the Gerber folder.")
         outline = board_outline(stack.outline.instance, tolerance)
-        holes = unary_union([layer_geometry(drill.instance, tolerance) for drill in stack.drill_layers])
+        drill_layers = [drill.instance for drill in stack.drill_layers]
+        holes = unary_union([layer_geometry(drill, tolerance) for drill in drill_layers])
+        # Preserve source circles independently of the polygonized preview.
+        # Routed slots remain polygons; never infer drills from artwork/cutouts.
+        drill_holes = [DrillHole(p.x, p.y, p.r)
+                       for drill in drill_layers for obj in drill.objects
+                       for p in obj.to_primitives(MM)
+                       if isinstance(p, gp.Circle) and p.polarity_dark and p.r > 0]
         substrate = clean(outline.difference(holes))
         layers = []
         notes = []
@@ -168,4 +175,5 @@ def load_board(path: str, progress=lambda message: None, *, tolerance=TOLERANCE)
         notes.extend(str(item.message) for item in caught)
         notes.append(f"Soldermask files are interpreted as openings. Curves use a {tolerance:g} mm chord tolerance.")
         name = source.stem if source.is_file() and source.suffix.lower() == ".zip" else stack.board_name or source.stem
-        return Board(name, substrate, layers, list(dict.fromkeys(notes)), tolerance, str(source.resolve()))
+        return Board(name, substrate, layers, list(dict.fromkeys(notes)), tolerance,
+                     str(source.resolve()), drill_holes)

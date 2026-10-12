@@ -24,6 +24,22 @@ def build_assembly(components, progress=lambda message: None, *, add_monolith=Tr
             if not solid.isValid():
                 raise ValueError(f"Invalid solid in {part.name}. Check the source Gerber geometry.")
             solids.append(solid)
+        if solids and part.drill_holes:
+            # Preview holes are inscribed polygons. Cutting the exact source
+            # cylinders removes the remaining facets without filling artwork
+            # gaps, slots, overlapping drills or holes crossing the board edge.
+            xmin, ymin, xmax, ymax = part.geometry.bounds
+            cutters = [cq.Solid.makeCylinder(
+                hole.radius, part.thickness + 2,
+                cq.Vector(hole.x, hole.y, part.z - 1))
+                for hole in part.drill_holes
+                if hole.x + hole.radius > xmin and hole.x - hole.radius < xmax
+                and hole.y + hole.radius > ymin and hole.y - hole.radius < ymax]
+            if cutters:
+                drilled = cq.Compound.makeCompound(solids).cut(*cutters).clean()
+                if not drilled.isValid():
+                    raise ValueError(f"Invalid drilled solid in {part.name}.")
+                solids = drilled.Solids()
         if part.kind in ("copper", "dielectric"):
             manufacturing_solids.extend(solids)
         if solids:

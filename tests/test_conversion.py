@@ -133,5 +133,9 @@ def test_step_roundtrip_has_separate_valid_solids(tmp_path):
     assert bounds.xlen == pytest.approx(60)
     assert bounds.ylen == pytest.approx(40)
     assert bounds.zlen == pytest.approx(2.2)
-    expected = sum(p.geometry.area*p.thickness for p in parts)
+    # Export replaces the inscribed preview holes with exact cylinders.
+    from shapely.ops import unary_union
+    holes = unary_union([Point(h.x, h.y).buffer(h.radius, quad_segs=1024)
+                         for h in board.drill_holes])
+    expected = sum(p.geometry.difference(holes).area*p.thickness for p in parts)
     assert sum(s.Volume() for s in result.Solids()) == pytest.approx(expected, rel=1e-6)

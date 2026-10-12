@@ -19,6 +19,15 @@ class Layer:
 
 
 @dataclass
+class DrillHole:
+    """Exact Excellon drill location and radius, in millimetres."""
+
+    x: float
+    y: float
+    radius: float
+
+
+@dataclass
 class Board:
     name: str
     outline: BaseGeometry
@@ -26,6 +35,7 @@ class Board:
     warnings: list[str] = field(default_factory=list)
     tolerance: float = 0.01
     source_path: str = ""
+    drill_holes: list[DrillHole] = field(default_factory=list)
 
 
 @dataclass
@@ -44,6 +54,7 @@ class Component:
     geometry: BaseGeometry
     z: float
     thickness: float
+    drill_holes: list[DrillHole] = field(default_factory=list)
 
     @property
     def color(self):
@@ -94,5 +105,7 @@ def stack_components(board: Board, settings: Settings) -> list[Component]:
                     start = cursor if side == "top" else cursor - thickness
                     cursor += thickness if side == "top" else -thickness
                 parts.append(Component(layer.name, kind, layer.geometry, start, thickness))
+    for part in parts:
+        part.drill_holes = board.drill_holes
     return [part for part in parts if not part.geometry.is_empty
             and settings.enabled.get("dielectric" if part.kind == "dielectric" else part.name, True)]
