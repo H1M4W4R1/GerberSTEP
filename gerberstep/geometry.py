@@ -88,6 +88,33 @@ def layer_geometry(cam, tolerance=TOLERANCE):
     return clean(result.union(unary_union(pending)))
 
 
+def circular_boundaries(cam, *, outline=False):
+    """Source circles for conservative STEP arc recovery, never fitted guesses."""
+    circles = set()
+    for obj in cam.objects:
+        for p in obj.to_primitives(MM):
+            if isinstance(p, gp.Circle):
+                circles.add((p.x, p.y, p.r))
+            elif isinstance(p, gp.Line):
+                if not outline:
+                    circles.update(((p.x1, p.y1, p.width / 2),
+                                    (p.x2, p.y2, p.width / 2)))
+            elif isinstance(p, gp.Arc):
+                radius = math.hypot(p.x1 - p.cx, p.y1 - p.cy)
+                if outline:
+                    circles.add((p.cx, p.cy, radius))
+                else:
+                    circles.update(((p.cx, p.cy, radius + p.width / 2),
+                                    (p.cx, p.cy, radius - p.width / 2),
+                                    (p.x1, p.y1, p.width / 2),
+                                    (p.x2, p.y2, p.width / 2)))
+            elif isinstance(p, gp.ArcPoly):
+                for start, end, (clockwise, center) in p.segments:
+                    if clockwise is not None:
+                        circles.add((*center, math.dist(start, center)))
+    return tuple(sorted(c for c in circles if c[2] > 0))
+
+
 def board_outline(cam, tolerance=TOLERANCE):
     segments, regions = [], []
     for obj in cam.objects:
@@ -167,13 +194,16 @@ def load_board(path: str, progress=lambda message: None, *, tolerance=TOLERANCE)
             name = f"{side.title()}_{dict(copper='Copper', mask='Soldermask', silk='Silkscreen')[kind]}"
             if geom.is_empty:
                 notes.append(f"{name}: no material inside the board; no STEP component will be created.")
-            layers.append(Layer(name, kind, side, geom, Path(original).name if original else ""))
+            layers.append(Layer(name, kind, side, geom, Path(original).name if original else "",
+                                circular_boundaries(instance)))
         if not any(layer.kind == "copper" for layer in layers):
             raise ValueError("No copper layers recognized. Use standard names such as .gtl/.gbl or F_Cu.gbr/B_Cu.gbr.")
         if substrate.is_empty:
             raise ValueError("The board outline is empty after drill subtraction.")
         notes.extend(str(item.message) for item in caught)
-        notes.append(f"Soldermask files are interpreted as openings. Curves use a {tolerance:g} mm chord tolerance.")
+        notes.append(f"Soldermask files are interpreted as openings. Preview curves use a {tolerance:g} mm chord tolerance. "
+                     "STEP restores supported source arcs and exact round drills.")
         name = source.stem if source.is_file() and source.suffix.lower() == ".zip" else stack.board_name or source.stem
         return Board(name, substrate, layers, list(dict.fromkeys(notes)), tolerance,
-                     str(source.resolve()), drill_holes)
+                     str(source.resolve()), drill_holes,
+                     circular_boundaries(stack.outline.instance, outline=True))

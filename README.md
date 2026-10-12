@@ -67,6 +67,20 @@ export geometry, not just display quality. Round Excellon drill holes are an
 exception: STEP always exports their exact diameters with cylindrical walls,
 independent of preview precision, so CAM software can recognize them for drilling.
 
+STEP also restores circular edges on round pads, trace ends and other supported
+source arcs when consecutive boundary vertices match the original Gerber circle.
+It uses source centres and radii, rather than guessing curves from arbitrary
+polygons. Clipped or ambiguous fragments retain their facets. Recovery is skipped
+where it would create an invalid solid or connect separate material islands.
+The preview remains polygonized; restored edges stay within the selected chord
+tolerance of that preview.
+
+This reduces the edges and faces that Fusion must select and process for pockets.
+At Medium precision, the demo's manufacturing body drops from **525 to 307 faces**
+(42% fewer), without reducing precision or removing trace detail. This is a model
+complexity measurement, not a measured Fusion toolpath speedup. Re-export and
+re-import existing boards to use the recovered arcs.
+
 | Preset | Chord error | Intended trade-off |
 | --- | --- | --- |
 | Low | 0.10 mm | Fewest faces and simplest machining paths |
@@ -75,8 +89,8 @@ independent of preview precision, so CAM software can recognize them for drillin
 
 Changing precision rebuilds the open fabrication set in the background. Thickness,
 enabled layers, coating alignment and camera position are preserved. Larger chord
-errors visibly facet small holes in the preview and pads in both preview and
-export; choose the tolerance your job permits.
+errors visibly facet small holes and pads in the preview; unresolved curves also
+remain faceted in export. Choose the tolerance your job permits.
 
 **Add manufacturing monolith** is enabled by default. Export adds an extra component
 named `Manufacturing_Monolith`, containing one Boolean-fused copper/dielectric solid.
@@ -109,8 +123,8 @@ colours are uploaded only when a material mesh changes. A working OpenGL driver
 is required for interactive 3D. Headless screenshot tests use the software path.
 
 Both previews use the same planar geometry and layer settings as the STEP
-export, except for the export-only coating alignment and exact cylindrical drill
-walls. Loading, geometry preparation and
+export, except for the export-only coating alignment, restored source arcs and
+exact cylindrical drill walls. Loading, geometry preparation and
 STEP writing run in a worker thread. Controls are locked while a job runs; the
 window waits for that job before allowing closure.
 
@@ -130,7 +144,8 @@ window waits for that job before allowing closure.
   complement within the board. Material-positive mask files must be inverted
   upstream. Legacy `%IPNEG*%` files are rejected; use a modern RS-274X export.
 - Artwork, outlines and routed slots are polygonized with the **selected chord
-  tolerance**. Round Excellon drills retain their source centres and radii and
+  tolerance**. Supported source arcs are restored conservatively during STEP
+  export. Round Excellon drills retain their source centres and radii and
   are cut as exact cylinders in every exported layer and the manufacturing body.
   This is a geometric reconstruction, not recovery of a manufacturer's stackup.
 

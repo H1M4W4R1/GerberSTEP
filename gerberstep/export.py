@@ -4,6 +4,52 @@ import tempfile
 from pathlib import Path
 
 from .geometry import polygons
+from .curves import CircularWires
+
+
+def component_solids(part):
+    """Use source arcs when they preserve valid, separate material regions."""
+    import cadquery as cq
+    from shapely.geometry import box
+    from shapely.strtree import STRtree
+
+    regions = list(polygons(part.geometry))
+
+    def faceted(poly):
+        def wire(ring):
+            return cq.Wire.makePolygon([cq.Vector(x, y, part.z)
+                                       for x, y in list(ring.coords)[:-1]], close=True)
+        return cq.Solid.extrudeLinear(wire(poly.exterior), [wire(r) for r in poly.interiors],
+                                      cq.Vector(0, 0, part.thickness))
+
+    curves = CircularWires(part.circles, part.tolerance) if part.circles else None
+    solids, recovered = [], []
+    for poly in regions:
+        solid = None
+        if curves:
+            try:
+                solid = curves.solid(poly, part.z, part.thickness)
+            except (ValueError, RuntimeError):
+                # Ambiguous intersections keep the original polygon boundaries.
+                pass
+        recovered.append(solid is not None)
+        solids.append(solid if solid is not None else faceted(poly))
+
+    if any(recovered) and len(solids) > 1:
+        margin = part.tolerance + 1e-7
+        tree = STRtree([box(p.bounds[0]-margin, p.bounds[1]-margin,
+                            p.bounds[2]+margin, p.bounds[3]+margin) for p in regions])
+        for i, solid in enumerate(solids):
+            bounds = solid.BoundingBox()
+            neighbors = tree.query(box(bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax))
+            if any(j > i and (recovered[i] or recovered[j])
+                   and solid.distance(solids[j]) <= 1e-7 for j in neighbors):
+                # Never close a gap or merge separate artwork islands by recovering arcs.
+                solids = [faceted(poly) for poly in regions]
+                break
+    if any(not solid.isValid() for solid in solids):
+        raise ValueError(f"Invalid solid in {part.name}. Check the source Gerber geometry.")
+    return solids
 
 
 def build_assembly(components, progress=lambda message: None, *, add_monolith=True):
@@ -15,15 +61,7 @@ def build_assembly(components, progress=lambda message: None, *, add_monolith=Tr
     manufacturing_solids = []
     for index, part in enumerate(components):
         progress(f"Creating solid {index+1}/{len(components)} · {part.name}")
-        solids = []
-        for poly in polygons(part.geometry):
-            def wire(ring):
-                return cq.Wire.makePolygon([cq.Vector(x, y, part.z) for x, y in list(ring.coords)[:-1]], close=True)
-            solid = cq.Solid.extrudeLinear(wire(poly.exterior), [wire(ring) for ring in poly.interiors],
-                                          cq.Vector(0, 0, part.thickness))
-            if not solid.isValid():
-                raise ValueError(f"Invalid solid in {part.name}. Check the source Gerber geometry.")
-            solids.append(solid)
+        solids = component_solids(part)
         if solids and part.drill_holes:
             # Preview holes are inscribed polygons. Cutting the exact source
             # cylinders removes the remaining facets without filling artwork

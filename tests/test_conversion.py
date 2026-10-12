@@ -138,4 +138,6 @@ def test_step_roundtrip_has_separate_valid_solids(tmp_path):
     holes = unary_union([Point(h.x, h.y).buffer(h.radius, quad_segs=1024)
                          for h in board.drill_holes])
     expected = sum(p.geometry.difference(holes).area*p.thickness for p in parts)
-    assert sum(s.Volume() for s in result.Solids()) == pytest.approx(expected, rel=1e-6)
+    # Source arcs recover the true curves within the preview's chord tolerance.
+    allowed = sum(p.geometry.length * board.tolerance * p.thickness for p in parts)
+    assert sum(s.Volume() for s in result.Solids()) == pytest.approx(expected, abs=allowed)

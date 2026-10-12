@@ -263,7 +263,7 @@ class MainWindow(QMainWindow):
         for name, tolerance in [("Low · 0.10 mm", 0.1), ("Medium · 0.05 mm", 0.05), ("High · 0.01 mm", 0.01)]:
             self.precision.addItem(name, tolerance)
         self.precision.setCurrentIndex(1)
-        self.precision.setToolTip("Maximum curve chord error. Lower precision uses fewer faces for simpler machining paths. Changes rebuild the loaded board.")
+        self.precision.setToolTip("Maximum curve chord error. STEP restores supported source arcs and exact round drill holes. Other curves remain faceted. Changes rebuild the loaded board.")
         self.precision.currentIndexChanged.connect(self.precision_changed)
         export_options.addWidget(self.precision)
         preview_layout.addLayout(export_options)

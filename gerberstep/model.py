@@ -16,6 +16,7 @@ class Layer:
     side: str
     geometry: BaseGeometry
     source: str = ""
+    circles: tuple[tuple[float, float, float], ...] = ()
 
 
 @dataclass
@@ -36,6 +37,7 @@ class Board:
     tolerance: float = 0.01
     source_path: str = ""
     drill_holes: list[DrillHole] = field(default_factory=list)
+    outline_circles: tuple[tuple[float, float, float], ...] = ()
 
 
 @dataclass
@@ -55,6 +57,8 @@ class Component:
     z: float
     thickness: float
     drill_holes: list[DrillHole] = field(default_factory=list)
+    circles: tuple[tuple[float, float, float], ...] = ()
+    tolerance: float = 0.01
 
     @property
     def color(self):
@@ -105,7 +109,10 @@ def stack_components(board: Board, settings: Settings) -> list[Component]:
                     start = cursor if side == "top" else cursor - thickness
                     cursor += thickness if side == "top" else -thickness
                 parts.append(Component(layer.name, kind, layer.geometry, start, thickness))
+    layer_circles = {layer.name: layer.circles for layer in board.layers}
     for part in parts:
         part.drill_holes = board.drill_holes
+        part.circles = board.outline_circles + layer_circles.get(part.name, ())
+        part.tolerance = board.tolerance
     return [part for part in parts if not part.geometry.is_empty
             and settings.enabled.get("dielectric" if part.kind == "dielectric" else part.name, True)]
