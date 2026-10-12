@@ -167,4 +167,5 @@ def load_board(path: str, progress=lambda message: None, *, tolerance=TOLERANCE)
             raise ValueError("The board outline is empty after drill subtraction.")
         notes.extend(str(item.message) for item in caught)
         notes.append(f"Soldermask files are interpreted as openings. Curves use a {tolerance:g} mm chord tolerance.")
-        return Board(stack.board_name or source.stem, substrate, layers, list(dict.fromkeys(notes)), tolerance, str(source.resolve()))
+        name = source.stem if source.is_file() and source.suffix.lower() == ".zip" else stack.board_name or source.stem
+        return Board(name, substrate, layers, list(dict.fromkeys(notes)), tolerance, str(source.resolve()))

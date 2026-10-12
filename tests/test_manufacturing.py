@@ -61,7 +61,22 @@ def test_monolith_handles_internal_copper_and_rejects_disconnected_boards():
              Component("Core2", "dielectric", substrate, 0.9, 0.8)]
     monolith = build_assembly(parts).objects["Manufacturing_Monolith"].obj
     assert len(monolith.Solids()) == 1
-    detached = [Component("Panel", "dielectric", box(0, 0, 2, 2).union(box(4, 0, 6, 2)), 0, 1.6)]
+    detached = [Component("Panel", "dielectric", box(0, 0, 2, 2).union(box(4, 0, 6, 2)), 0, 1.6),
+                Component("Copper", "copper", box(0, 0, 1, 1), 1.6, 0.1)]
     with pytest.raises(ValueError, match="one connected solid"):
         build_assembly(detached)
-    assert len(build_assembly(detached, add_monolith=False).children) == 1
+    assert len(build_assembly(detached, add_monolith=False).children) == 2
+
+
+def test_silkscreen_only_export_omits_monolith_and_empty_selection_fails(tmp_path):
+    board = load_board(str(DEMO))
+    enabled = {layer.name: layer.name == "Top_Silkscreen" for layer in board.layers}
+    enabled["dielectric"] = False
+    parts = stack_components(board, Settings(enabled=enabled))
+    assert [p.name for p in parts] == ["Top_Silkscreen"]
+    file = tmp_path / "silk.step"
+    export_step(parts, file)
+    assert "Manufacturing_Monolith" not in file.read_text()
+    assert cq.importers.importStep(str(file)).val().isValid()
+    with pytest.raises(ValueError, match="at least one"):
+        export_step([], tmp_path / "empty.step")

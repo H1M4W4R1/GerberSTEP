@@ -1,0 +1,43 @@
+name: Build desktop executables
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows
+            executable: GerberSTEP.exe
+          - os: ubuntu-24.04
+            target: linux
+            executable: GerberSTEP
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Linux runtime libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 libxcb-render-util0
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pip install -e ".[build,test]"
+      - run: python -m pytest -q
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - run: python scripts/build.py
+      - name: Test bundled imports and STEP export
+        shell: bash
+        run: '"dist/${{ matrix.target }}/GerberSTEP/${{ matrix.executable }}" --self-test "build/bundle-smoke.json"'
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GerberSTEP-${{ matrix.target }}
+          path: |
+            dist/GerberSTEP-${{ matrix.target }}.zip
+            dist/GerberSTEP-${{ matrix.target }}.tar.gz

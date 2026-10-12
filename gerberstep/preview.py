@@ -59,6 +59,7 @@ class BoardPreview(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.parts = []
+        self.has_board = False
         self.cache = {}
         self.paths = {}
         self.mode = "3D"
@@ -130,10 +131,12 @@ class BoardPreview(QWidget):
         if not self.parts:
             painter.setPen(QColor("#e1eafd"))
             painter.setFont(QFont("Inter", 21, QFont.Weight.DemiBold))
-            painter.drawText(self.rect().adjusted(20, -28, -20, -28), Qt.AlignmentFlag.AlignCenter, "Your board, in another dimension.")
+            painter.drawText(self.rect().adjusted(20, -28, -20, -28), Qt.AlignmentFlag.AlignCenter,
+                             "No layers selected." if self.has_board else "Your board, in another dimension.")
             painter.setFont(QFont("Inter", 11))
             painter.setPen(QColor("#8193ac"))
-            painter.drawText(self.rect().adjusted(20, 55, -20, 55), Qt.AlignmentFlag.AlignCenter, "Open a Gerber folder or ZIP to preview every layer.")
+            painter.drawText(self.rect().adjusted(20, 55, -20, 55), Qt.AlignmentFlag.AlignCenter,
+                             "Enable a layer to preview and export it." if self.has_board else "Open a Gerber folder or ZIP to preview every layer.")
             return
         scale = min(self.width(), self.height()) * 0.72 / self.span * self.zoom
         origin = QPointF(self.width()/2, self.height()/2) + self.pan

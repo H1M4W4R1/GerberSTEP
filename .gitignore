@@ -6,3 +6,4 @@ build/
 dist/
 output/
 .idea/
+build-*.log

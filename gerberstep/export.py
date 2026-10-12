@@ -10,6 +10,8 @@ def build_assembly(components, progress=lambda message: None, *, add_monolith=Tr
     import cadquery as cq
 
     assembly = cq.Assembly(name="GerberSTEP")
+    if not components:
+        raise ValueError("Select at least one non-empty layer to export.")
     manufacturing_solids = []
     for index, part in enumerate(components):
         progress(f"Creating solid {index+1}/{len(components)} · {part.name}")
@@ -27,7 +29,7 @@ def build_assembly(components, progress=lambda message: None, *, add_monolith=Tr
         if solids:
             rgb = tuple(int(part.color[i:i+2], 16)/255 for i in (1, 3, 5))
             assembly.add(cq.Compound.makeCompound(solids), name=part.name, color=cq.Color(*rgb))
-    if add_monolith:
+    if add_monolith and {"copper", "dielectric"}.issubset({p.kind for p in components}):
         progress("Fusing copper and dielectric into the manufacturing monolith…")
         if not manufacturing_solids:
             raise ValueError("No copper/dielectric solids are available for the manufacturing monolith.")

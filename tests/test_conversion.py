@@ -29,7 +29,9 @@ def test_zip_and_selected_file(tmp_path):
     with ZipFile(path, "w") as archive:
         for file in DEMO.iterdir():
             archive.write(file, f"fabrication/{file.name}")
-    assert len(load_board(str(path)).layers) == 6
+    loaded = load_board(str(path))
+    assert len(loaded.layers) == 6
+    assert loaded.name == "board"
     assert len(load_board(str(DEMO / "demo.gtl")).layers) == 6
 
 

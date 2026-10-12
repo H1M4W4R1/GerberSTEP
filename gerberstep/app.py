@@ -1,6 +1,8 @@
 import os
 import sys
 import traceback
+import re
+from dataclasses import replace
 from pathlib import Path
 
 os.environ.setdefault("QT_API", "pyqt6")
@@ -11,7 +13,7 @@ from PyQt6.QtGui import QAction, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFrame,
     QHBoxLayout, QLabel, QLayout, QMainWindow, QMessageBox, QProgressBar, QPushButton,
-    QScrollArea, QSplitter, QVBoxLayout, QWidget,
+    QInputDialog, QScrollArea, QSplitter, QVBoxLayout, QWidget,
 )
 
 from .export import export_step
@@ -120,7 +122,9 @@ class MainWindow(QMainWindow):
         self.task = None
         self.settings = Settings()
         self.components = []
+        self.export_components = []
         self.optional = {}
+        self.layer_checks = {}
         self.setWindowTitle("GerberSTEP · PCB to mechanical assembly")
         self.setWindowIcon(application_icon())
         self.resize(1320, 860)
@@ -168,26 +172,26 @@ class MainWindow(QMainWindow):
         settings_layout.setSpacing(12)
         self.copper = self.add_thickness(settings_layout, "Copper · all foils", 0.1, [0.050, 0.075, 0.100])
         self.dielectric = self.add_thickness(settings_layout, "Dielectric · total", 1.6, [1.2, 1.5, 1.6])
-        note = label("Copper and dielectric are always included.\nInternal foils divide the substrate equally.", "muted")
+        note = label("Choose included materials in the layer list.\nInternal foils divide the substrate equally.", "muted")
         note.setWordWrap(True)
         settings_layout.addWidget(note)
         sidebar.addWidget(card)
 
-        sidebar.addWidget(label("SURFACE LAYERS", "section"))
+        sidebar.addWidget(label("LAYERS", "section"))
         self.layer_area = QScrollArea()
         self.layer_area.setWidgetResizable(True)
         self.layer_area.setMinimumHeight(130)
         self.layer_container = QWidget()
         self.layer_layout = QVBoxLayout(self.layer_container)
         self.layer_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinAndMaxSize)
-        self.layer_layout.setContentsMargins(0, 0, 0, 0)
+        self.layer_layout.setContentsMargins(0, 0, 14, 0)
         self.layer_layout.addWidget(label("Open a board to configure its layers.", "muted"))
         self.layer_layout.addStretch()
         self.layer_area.setWidget(self.layer_container)
         sidebar.addWidget(self.layer_area, 1)
         self.coplanar = button("Align coatings with copper", "fa5s.layer-group")
         self.coplanar.setCheckable(True)
-        self.coplanar.setToolTip("Place soldermask and silkscreen at the outer copper base height on both sides. Components may overlap; their thickness stays unchanged.")
+        self.coplanar.setToolTip("Export only: place soldermask and silkscreen at the outer copper base height. The preview keeps the normal stacked layout.")
         self.coplanar.toggled.connect(self.refresh)
         sidebar.addWidget(self.coplanar)
         self.mode_note = label("Stacked: mask and silk sit above copper.", "muted")
@@ -207,7 +211,18 @@ class MainWindow(QMainWindow):
         preview_layout.setSpacing(12)
         preview_layout.addWidget(label("02  /  INSPECT YOUR BOARD", "section"))
         self.board_title = label("No board loaded", "boardTitle")
-        preview_layout.addWidget(self.board_title)
+        self.board_title.setTextFormat(Qt.TextFormat.PlainText)
+        title_row = QHBoxLayout()
+        self.rename_button = button("", "fa5s.pencil-alt")
+        self.rename_button.setFixedSize(34, 34)
+        self.rename_button.setStyleSheet("padding: 5px;")
+        self.rename_button.setToolTip("Edit export file name")
+        self.rename_button.setAccessibleName("Edit export file name")
+        self.rename_button.setEnabled(False)
+        self.rename_button.clicked.connect(self.rename_board)
+        title_row.addWidget(self.rename_button)
+        title_row.addWidget(self.board_title, 1)
+        preview_layout.addLayout(title_row)
         self.board_info = label("Gerber + Excellon  ·  Folder or ZIP  ·  1 board per set", "muted")
         preview_layout.addWidget(self.board_info)
         toolbar = QHBoxLayout()
@@ -297,6 +312,22 @@ class MainWindow(QMainWindow):
         if path:
             self.open_path(path)
 
+    def rename_board(self):
+        if self.board is None or self.task:
+            return
+        name, accepted = QInputDialog.getText(self, "Export file name", "File name (without .step):", text=self.board.name)
+        if not accepted:
+            return
+        name = name.strip()
+        if name.lower().endswith((".step", ".stp")):
+            name = name.rsplit(".", 1)[0]
+        if (not name or name.endswith((".", " ")) or re.search(r'[<>:"/\\|?*\x00-\x1f]', name)
+                or re.match(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)", name, re.I)):
+            QMessageBox.warning(self, "Invalid file name", "Enter a file name without path separators or reserved filename characters.")
+            return
+        self.board.name = name
+        self.board_title.setText(name)
+
     def choose_folder(self):
         if not self.task:
             path = QFileDialog.getExistingDirectory(self, "Open folder containing one Gerber set")
@@ -311,6 +342,7 @@ class MainWindow(QMainWindow):
         self.folder_button.setEnabled(False)
         self.precision.setEnabled(False)
         self.monolith.setEnabled(False)
+        self.rename_button.setEnabled(False)
         self.progress.setRange(0, 0)
         self.progress.show()
         self.task = Task(function, self)
@@ -328,13 +360,14 @@ class MainWindow(QMainWindow):
         self.open_button.setEnabled(True)
         self.folder_button.setEnabled(True)
         self.precision.setEnabled(True)
-        self.monolith.setEnabled(True)
+        self.monolith.setEnabled(self.monolith_available())
+        self.rename_button.setEnabled(self.board is not None)
         if self.board is not None:
             # On a failed rebuild, the controls must still describe the retained board.
             self.precision.blockSignals(True)
             self.precision.setCurrentIndex(self.precision.findData(self.board.tolerance))
             self.precision.blockSignals(False)
-        self.export_button.setEnabled(self.board is not None)
+        self.export_button.setEnabled(bool(self.export_components))
         self.progress.hide()
 
     def precision_changed(self):
@@ -355,28 +388,40 @@ class MainWindow(QMainWindow):
 
     def board_loaded(self, result, preserve=False):
         previous = {name: (check.isChecked(), thickness.value()) for name, (check, thickness) in self.optional.items()} if preserve else {}
+        previous_checks = {name: check.isChecked() for name, check in self.layer_checks.items()} if preserve else {}
+        previous_name = self.board.name if preserve and self.board else None
         self.board, cache = result
+        if previous_name is not None:
+            self.board.name = previous_name
         self.precision.blockSignals(True)
         self.precision.setCurrentIndex(self.precision.findData(self.board.tolerance))
         self.precision.blockSignals(False)
         self.optional.clear()
+        self.layer_checks.clear()
         while self.layer_layout.count():
             item = self.layer_layout.takeAt(0)
             if item.widget():
+                item.widget().hide()
                 item.widget().deleteLater()
         self.settings = Settings(copper=self.copper.value(), dielectric=self.dielectric.value())
+        dielectric_check = QCheckBox("Dielectric · all sections")
+        dielectric_check.setChecked(previous_checks.get("dielectric", True))
+        dielectric_check.setMinimumHeight(38)
+        dielectric_check.toggled.connect(self.refresh)
+        self.layer_checks["dielectric"] = dielectric_check
+        self.layer_layout.addWidget(dielectric_check)
         for layer in sorted(self.board.layers, key=lambda p: (p.side != "top", p.side, p.kind)):
             row = QWidget()
             row.setFixedHeight(46)
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 4, 0, 4)
             check = QCheckBox(layer.name.replace("_", " "))
-            check.setChecked(True)
+            check.setChecked(previous_checks.get(layer.name, True))
             check.setToolTip(layer.source)
             row_layout.addWidget(check, 1)
+            self.layer_checks[layer.name] = check
             if layer.kind == "copper":
-                check.setEnabled(False)
-                row_layout.addWidget(label("Required", "muted"))
+                row_layout.addWidget(label("Copper", "muted"))
             else:
                 enabled, value = previous.get(layer.name, (True, 0.1))
                 check.setChecked(enabled)
@@ -386,34 +431,42 @@ class MainWindow(QMainWindow):
                 row_layout.addWidget(thickness)
                 self.optional[layer.name] = check, thickness
                 check.toggled.connect(thickness.setEnabled)
-                check.toggled.connect(self.refresh)
                 thickness.valueChanged.connect(self.refresh)
+            check.toggled.connect(self.refresh)
             self.layer_layout.addWidget(row)
         self.layer_layout.addStretch()
         self.preview.cache = cache
         self.preview.paths.clear()
         self.board_title.setText(self.board.name)
         self.notes.setEnabled(True)
+        self.rename_button.setEnabled(True)
         self.refresh()
         if not preserve:
             self.preview.fit()
         self.statusBar().showMessage(f"Loaded {len(self.board.layers)} material layers · Review Import details before export")
 
     def refresh(self, *_):
-        self.mode_note.setText("Aligned: coatings share copper height; solids can overlap." if self.coplanar.isChecked()
-                               else "Stacked: mask and silk sit above copper.")
+        self.mode_note.setText("Export: coatings aligned. Preview stays stacked." if self.coplanar.isChecked()
+                               else "Preview and export: coatings stacked.")
         if not self.board:
             return
         self.settings.copper = self.copper.value()
         self.settings.dielectric = self.dielectric.value()
         self.settings.coplanar = self.coplanar.isChecked()
+        self.settings.enabled = {name: check.isChecked() for name, check in self.layer_checks.items()}
         for name, (check, thickness) in self.optional.items():
             self.settings.enabled[name] = check.isChecked()
             self.settings.thicknesses[name] = thickness.value()
-        self.components = stack_components(self.board, self.settings)
+        self.components = stack_components(self.board, replace(self.settings, coplanar=False))
+        self.export_components = stack_components(self.board, self.settings)
+        self.export_button.setEnabled(bool(self.export_components) and self.task is None)
+        self.monolith.setEnabled(self.monolith_available() and self.task is None)
+        self.monolith.setToolTip("Adds one fused copper/dielectric body to the STEP file." if self.monolith_available()
+                                else "Monolith omitted: select both copper and dielectric to enable it.")
         self.preview.set_components(self.components)
+        self.preview.has_board = True
         x0, y0, x1, y1 = self.board.outline.bounds
-        height = max(p.z+p.thickness for p in self.components)-min(p.z for p in self.components)
+        height = (max(p.z+p.thickness for p in self.components)-min(p.z for p in self.components)) if self.components else 0
         self.board_info.setText(f"{x1-x0:.2f} × {y1-y0:.2f} mm  ·  {height:.3f} mm stack  ·  {len(self.components)} layers  ·  {self.board.tolerance:g} mm precision")
 
     def change_view(self, *_):
@@ -425,8 +478,11 @@ class MainWindow(QMainWindow):
         self.preview.sync_view()
         self.preview.update()
 
+    def monolith_available(self):
+        return {"copper", "dielectric"}.issubset({part.kind for part in self.export_components})
+
     def choose_export(self):
-        if not self.board or self.task:
+        if not self.board or self.task or not self.export_components:
             return
         dialog = QFileDialog(self, "Export STEP assembly")
         dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
@@ -435,14 +491,14 @@ class MainWindow(QMainWindow):
         dialog.selectFile(f"{self.board.name}.step")
         if dialog.exec():
             path = dialog.selectedFiles()[0]
-            parts = list(self.components)
-            add_monolith = self.monolith.isChecked()
+            parts = list(self.export_components)
+            add_monolith = self.monolith.isChecked() and self.monolith_available()
             self.run_task(lambda progress: export_step(parts, path, progress, add_monolith=add_monolith), self.export_done)
 
     def export_done(self, path):
         self.statusBar().showMessage(f"STEP exported · {path}")
-        extra = "\nAdded Manufacturing_Monolith: select this body and hide the original layers for machining." if self.monolith.isChecked() else ""
-        QMessageBox.information(self, "STEP assembly exported", f"Saved {len(self.components)} layer components.{extra}\n\n{path}")
+        extra = "\nAdded Manufacturing_Monolith: select this body and hide the original layers for machining." if self.monolith.isChecked() and self.monolith_available() else ""
+        QMessageBox.information(self, "STEP assembly exported", f"Saved {len(self.export_components)} layer components.{extra}\n\n{path}")
 
     def show_notes(self):
         if self.board:

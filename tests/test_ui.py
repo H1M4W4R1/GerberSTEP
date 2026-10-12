@@ -17,7 +17,7 @@ def app():
     return app
 
 
-def test_async_import_controls_and_preview(app):
+def test_async_import_controls_and_preview(app, monkeypatch):
     window = MainWindow()
     errors = []
     window.show_error = lambda message, details: errors.append(message)
@@ -33,13 +33,18 @@ def test_async_import_controls_and_preview(app):
     assert len(window.components) == 7
     assert window.monolith.isChecked()
     assert window.board.tolerance == 0.05
+    monkeypatch.setattr("gerberstep.app.QInputDialog.getText", lambda *args, **kwargs: ("My export.step", True))
+    window.rename_button.click()
+    assert window.board.name == "My export"
+    assert window.board_title.text() == "My export"
     window.copper.setValue(0.05)
     assert all(p.thickness == 0.05 for p in window.components if p.kind == "copper")
     window.optional["Top_Silkscreen"][0].setChecked(False)
     assert len(window.components) == 6
     window.coplanar.click()
     top_mask = next(p for p in window.components if p.name == "Top_Soldermask")
-    assert top_mask.z == 1.6
+    assert top_mask.z == pytest.approx(1.65)
+    assert next(p for p in window.export_components if p.name == "Top_Soldermask").z == 1.6
     window.optional["Bottom_Soldermask"][1].setValue(0.075)
     window.precision.setCurrentIndex(0)
     deadline = time.monotonic()+30
@@ -49,6 +54,7 @@ def test_async_import_controls_and_preview(app):
     assert not errors
     assert window.task is None
     assert window.board.tolerance == 0.1
+    assert window.board.name == "My export"
     assert window.copper.value() == 0.05
     assert window.coplanar.isChecked()
     assert not window.optional["Top_Silkscreen"][0].isChecked()
@@ -58,5 +64,15 @@ def test_async_import_controls_and_preview(app):
     assert window.preview.bottom
     assert not window.grab().isNull()
     window.view_mode.setCurrentText("3D")
+    assert not window.grab().isNull()
+    for name, check in window.layer_checks.items():
+        check.setChecked(name == "Top_Silkscreen")
+    assert [p.name for p in window.export_components] == ["Top_Silkscreen"]
+    assert window.export_button.isEnabled()
+    assert not window.monolith.isEnabled()
+    assert window.layer_layout.contentsMargins().right() >= 12
+    window.layer_checks["Top_Silkscreen"].setChecked(False)
+    assert not window.export_components
+    assert not window.export_button.isEnabled()
     assert not window.grab().isNull()
     window.close()

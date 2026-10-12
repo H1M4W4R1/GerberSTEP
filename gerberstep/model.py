@@ -94,4 +94,5 @@ def stack_components(board: Board, settings: Settings) -> list[Component]:
                     start = cursor if side == "top" else cursor - thickness
                     cursor += thickness if side == "top" else -thickness
                 parts.append(Component(layer.name, kind, layer.geometry, start, thickness))
-    return [part for part in parts if not part.geometry.is_empty]
+    return [part for part in parts if not part.geometry.is_empty
+            and settings.enabled.get("dielectric" if part.kind == "dielectric" else part.name, True)]

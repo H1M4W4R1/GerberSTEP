@@ -1,4 +1,7 @@
 # GerberSTEP
+<div align="center">
+  <img src="examples/screenshot.png" alt="Preview screenshot"/>
+</div>
 
 A PyQt6 desktop app that turns a Gerber fabrication set into a coloured STEP
 assembly with separate copper, dielectric, soldermask and silkscreen components.
@@ -31,8 +34,8 @@ The UI uses Qt's native window system; a functioning desktop session is required
 
 | Material | Default | Controls |
 | --- | --- | --- |
-| Copper | 0.100 mm per foil | Numeric input; 0.050 / 0.075 / 0.100 mm presets; always included |
-| Dielectric | 1.600 mm total | Numeric input; 1.2 / 1.5 / 1.6 mm presets; always included |
+| Copper | 0.100 mm per foil | Numeric input; 0.050 / 0.075 / 0.100 mm presets; individual layer checkboxes |
+| Dielectric | 1.600 mm total | Numeric input; 1.2 / 1.5 / 1.6 mm presets; checkbox for all sections |
 | Soldermask | 0.100 mm per layer | Individual top/bottom checkbox and thickness |
 | Silkscreen | 0.100 mm per layer | Individual top/bottom checkbox and thickness |
 
@@ -42,10 +45,19 @@ numeric layer order. A two-sided board with the defaults has a 2.2 mm overall
 stack: 1.6 mm substrate plus 0.1 mm each for two copper, two mask and two silk
 layers. Missing surface files do not create artificial layers.
 
-**Align coatings with copper** moves mask and silk to the same substrate surface
+Use the pencil to the left of the board name to edit the suggested STEP filename.
+ZIP imports use the ZIP filename, without its extension. Renaming does not change
+the source files, and survives precision rebuilds.
+
+Every material can be disabled in the layer list, including copper and dielectric.
+For a silk-only export, leave only the desired silkscreen checked. Disabling core
+materials preserves the board's layer heights. An empty selection disables export.
+
+**Align coatings with copper** moves exported mask and silk to the same substrate surface
 plane as outer copper. Top coatings extend upward and bottom coatings downward.
 Their own thicknesses are retained, so solids can overlap in this mode. It is
-intended for the requested machining workflow. STEP components stay separate.
+intended for the requested machining workflow. The preview always keeps coatings
+stacked, regardless of this export-only option. STEP components stay separate.
 
 ## Precision and manufacturing body
 
@@ -75,6 +87,8 @@ Disable the checkbox to export only the original components. Disconnected boards
 or unconnected stacks cannot form one monolith; the app reports an error rather than
 silently exporting a multi-solid compound as a monolith. Fusion adds export time,
 particularly at High precision.
+If the selection does not contain both copper and dielectric, the monolith option
+is disabled and no monolith is exported. It never restores layers you disabled.
 
 ## Preview
 
@@ -88,7 +102,7 @@ colours are uploaded only when a material mesh changes. A working OpenGL driver
 is required for interactive 3D. Headless screenshot tests use the software path.
 
 Both previews use the same planar geometry and layer settings as the STEP
-export. Changes are visible before exporting. Loading, geometry preparation and
+export, except for the export-only coating alignment. Loading, geometry preparation and
 STEP writing run in a worker thread. Controls are locked while a job runs; the
 window waits for that job before allowing closure.
 
@@ -149,3 +163,36 @@ Core libraries: [Gerbonara](https://gerbolyze.gitlab.io/gerbonara/),
 [CadQuery](https://cadquery.readthedocs.io/en/stable/), PyQt6, QtAwesome, Shapely
 and NumPy, plus PyQtGraph/PyOpenGL for the GPU preview. The layered PCB logo is an
 editable SVG in `gerberstep/assets/`.
+
+## Windows and Linux executable builds
+
+Build on the target OS; PyInstaller does not cross-compile Windows/Linux binaries.
+Use a 64-bit Python 3.12 environment on either platform:
+
+```text
+python -m pip install -r requirements.txt
+python -m pip install -e ".[build,test]"
+python scripts/build.py
+```
+
+Outputs:
+
+| Host | Executable | Portable archive |
+| --- | --- | --- |
+| Windows | `dist/windows/GerberSTEP/GerberSTEP.exe` | `dist/GerberSTEP-windows.zip` |
+| Linux | `dist/linux/GerberSTEP/GerberSTEP` | `dist/GerberSTEP-linux.tar.gz` |
+
+Distribute the entire folder, including `_internal`; the executable alone is not
+standalone. Python is bundled, as are Qt, CAD libraries, icons and the demo set.
+Builds are unsigned. Linux requires working system OpenGL/EGL libraries and a Qt
+desktop platform; Ubuntu CI installs these dependencies in `.github/workflows/build.yml`.
+The Linux build targets Ubuntu 24.04 or a compatible/newer glibc environment.
+
+Run the **Build desktop executables** GitHub Actions workflow manually (or push a
+`v*` tag) to build both platforms. Each job runs tests and a packaged STEP export
+smoke test before uploading its archive. Linux archives preserve executable permissions.
+No workflow is dispatched automatically by the local build script.
+
+The bundled diagnostic command `GerberSTEP --self-test report.json` tests icons,
+Qt imports, Gerber parsing and a STEP round trip, writing a JSON report. Use
+`QT_QPA_PLATFORM=offscreen` for a headless check. It does not test GPU rendering.
