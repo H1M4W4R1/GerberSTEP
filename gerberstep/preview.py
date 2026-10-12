@@ -1,10 +1,10 @@
-"""Interactive CPU-rendered 3D and vector 2D previews; no GPU required."""
+"""Cached GPU 3D and vector 2D previews; software path for headless QA."""
 import math
 
 import numpy as np
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPolygonF
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QApplication, QWidget
 from shapely import constrained_delaunay_triangles
 
 from .geometry import polygons
@@ -70,6 +70,13 @@ class BoardPreview(QWidget):
         self.last = None
         self.center = np.zeros(3)
         self.span = 60.0
+        self.gpu = None
+        # Qt's headless platforms do not support QOpenGLWidget. Keep software
+        # rendering for screenshots/tests; interactive desktop uses retained GL.
+        if QApplication.platformName() not in ("offscreen", "minimal"):
+            from .gpu_preview import GPUPreview
+            self.gpu = GPUPreview(self)
+            self.gpu.hide()
 
     def set_components(self, parts, cache=None, reset=False):
         self.parts = parts
@@ -92,11 +99,24 @@ class BoardPreview(QWidget):
                     self.paths[key] = path
         if reset:
             self.fit()
+        self.sync_view()
         self.update()
+
+    def sync_view(self):
+        if self.gpu is not None:
+            self.gpu.set_scene(self.parts, self.cache, self.center, self.span, self.exploded)
+            self.gpu.setVisible(self.mode == "3D" and bool(self.parts))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.gpu is not None:
+            self.gpu.setGeometry(self.rect())
 
     def fit(self):
         self.zoom, self.pan = 1.0, QPointF()
         self.yaw, self.pitch = -0.45, 0.8
+        if self.gpu is not None:
+            self.gpu.fit()
         self.update()
 
     def paintEvent(self, event):
@@ -127,7 +147,7 @@ class BoardPreview(QWidget):
                 painter.setBrush(QColor(part.color))
                 painter.drawPath(self.paths[id(part.geometry)])
             painter.restore()
-        else:
+        elif self.gpu is None:
             cy, sy = math.cos(self.yaw), math.sin(self.yaw)
             cp, sp = math.cos(self.pitch), math.sin(self.pitch)
             rotate = np.array([[cy, -sy, 0], [sy*sp, cy*sp, cp], [-sy*cp, -cy*cp, sp]])

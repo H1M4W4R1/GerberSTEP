@@ -21,6 +21,22 @@ from .preview import BoardPreview, mesh_template
 
 ASSETS = Path(__file__).parent / "assets"
 
+
+def configure_windows_identity():
+    """Separate this app from the pythonw taskbar group before creating Qt UI."""
+    if sys.platform == "win32":
+        import ctypes
+        function = ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID
+        function.argtypes = [ctypes.c_wchar_p]
+        function.restype = ctypes.c_long
+        result = function("GerberSTEP.Desktop")
+        if result != 0:
+            raise OSError(f"Could not register Windows application identity: {result:#x}")
+
+
+def application_icon():
+    return QIcon(str(ASSETS / "logo.ico"))
+
 STYLE = """
 QWidget { background: #101927; color: #dce7f8; font-family: 'Inter', 'Arial'; font-size: 13px; }
 QMainWindow { background: #101927; }
@@ -106,7 +122,7 @@ class MainWindow(QMainWindow):
         self.components = []
         self.optional = {}
         self.setWindowTitle("GerberSTEP · PCB to mechanical assembly")
-        self.setWindowIcon(QIcon(str(ASSETS / "logo.svg")))
+        self.setWindowIcon(application_icon())
         self.resize(1320, 860)
         self.setMinimumSize(1040, 700)
         self.setAcceptDrops(True)
@@ -369,6 +385,7 @@ class MainWindow(QMainWindow):
         self.preview.exploded = self.explode.isChecked()
         self.side.setEnabled(self.preview.mode == "2D")
         self.explode.setEnabled(self.preview.mode == "3D")
+        self.preview.sync_view()
         self.preview.update()
 
     def choose_export(self):
@@ -421,8 +438,10 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    configure_windows_identity()
     app = QApplication(sys.argv)
     app.setApplicationName("GerberSTEP")
+    app.setWindowIcon(application_icon())
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE)
     window = MainWindow()

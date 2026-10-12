@@ -49,10 +49,14 @@ intended for the requested machining workflow. STEP components stay separate.
 
 ## Preview
 
-Switch between **3D** (orbit, pan, zoom) and **2D** (top or mirrored bottom view).
+Switch between **3D** (drag to orbit, middle-drag to pan, scroll to zoom) and
+**2D** (top or mirrored bottom view).
 Double-click or press **Fit** to reset the camera. **Explode** separates layers
-only in the preview and never changes export heights. The 3D renderer uses a CPU
-depth buffer, avoiding an OpenGL requirement; complex boards can orbit slowly.
+only in the preview and never changes export heights. The desktop 3D renderer
+uses OpenGL with retained mesh buffers: rotation updates camera matrices, while
+thickness and exploded-view changes update component transforms. Geometry and
+colours are uploaded only when a material mesh changes. A working OpenGL driver
+is required for interactive 3D. Headless screenshot tests use the software path.
 
 Both previews use the same planar geometry and layer settings as the STEP
 export. Changes are visible before exporting. Loading, geometry preparation and
@@ -101,6 +105,17 @@ their original board designs.
 inspection. Windows offscreen rendering explicitly loads system Arial because
 that backend does not enumerate system fonts automatically.
 
+`scripts/benchmark_gpu.py` opens a brief native test window and records rotation
+latency and mesh-upload counts in `output/gpu-benchmark.json`. The demo measured
+4.17 ms median and 4.33 ms at the 95th percentile on an RTX 4060 Ti, with zero
+mesh uploads during 90 camera rotations. Larger boards will have different timings.
+
+Windows startup registers a dedicated application identity and loads a
+multi-resolution `.ico` for both the application and window. Restart the app after
+updating to apply the taskbar identity. `scripts/build_icon.py` regenerates the
+icon from the SVG source.
+
 Core libraries: [Gerbonara](https://gerbolyze.gitlab.io/gerbonara/),
 [CadQuery](https://cadquery.readthedocs.io/en/stable/), PyQt6, QtAwesome, Shapely
-and NumPy. The layered PCB logo is an editable SVG in `gerberstep/assets/`.
+and NumPy, plus PyQtGraph/PyOpenGL for the GPU preview. The layered PCB logo is an
+editable SVG in `gerberstep/assets/`.
