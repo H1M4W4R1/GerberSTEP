@@ -1,0 +1,106 @@
+# GerberSTEP
+
+A PyQt6 desktop app that turns a Gerber fabrication set into a coloured STEP
+assembly with separate copper, dielectric, soldermask and silkscreen components.
+
+## Run on this machine
+
+Double-click **launch.bat**. The local `.venv` already contains the dependencies.
+
+1. Choose **Open folder** and select `examples/demo` to try the included board.
+2. Adjust thicknesses or disable individual soldermask/silkscreen layers.
+3. Choose **Export STEP assembly**.
+
+You can also run `.venv\Scripts\python.exe main.py examples\demo` from this folder.
+
+## Fresh installation
+
+Use Python **3.12, 64-bit** (the tested runtime). CadQuery includes a large native
+CAD dependency, so the first installation downloads several hundred megabytes.
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[test]"
+.\.venv\Scripts\python.exe main.py
+```
+
+On Linux/macOS, use `python3.12 -m venv .venv` and `.venv/bin/python` instead.
+The UI uses Qt's native window system; a functioning desktop session is required.
+
+## Layer controls
+
+| Material | Default | Controls |
+| --- | --- | --- |
+| Copper | 0.100 mm per foil | Numeric input; 0.050 / 0.075 / 0.100 mm presets; always included |
+| Dielectric | 1.600 mm total | Numeric input; 1.2 / 1.5 / 1.6 mm presets; always included |
+| Soldermask | 0.100 mm per layer | Individual top/bottom checkbox and thickness |
+| Silkscreen | 0.100 mm per layer | Individual top/bottom checkbox and thickness |
+
+Dielectric thickness means **total insulating material**, excluding all copper.
+For multilayer boards, equal dielectric sections separate internal foils in
+numeric layer order. A two-sided board with the defaults has a 2.2 mm overall
+stack: 1.6 mm substrate plus 0.1 mm each for two copper, two mask and two silk
+layers. Missing surface files do not create artificial layers.
+
+**Align coatings with copper** moves mask and silk to the same substrate surface
+plane as outer copper. Top coatings extend upward and bottom coatings downward.
+Their own thicknesses are retained, so solids can overlap in this mode. It is
+intended for the requested machining workflow. STEP components stay separate.
+
+## Preview
+
+Switch between **3D** (orbit, pan, zoom) and **2D** (top or mirrored bottom view).
+Double-click or press **Fit** to reset the camera. **Explode** separates layers
+only in the preview and never changes export heights. The 3D renderer uses a CPU
+depth buffer, avoiding an OpenGL requirement; complex boards can orbit slowly.
+
+Both previews use the same planar geometry and layer settings as the STEP
+export. Changes are visible before exporting. Loading, geometry preparation and
+STEP writing run in a worker thread. Controls are locked while a job runs; the
+window waits for that job before allowing closure.
+
+## Input and geometry assumptions
+
+- Open a folder or ZIP containing **one board**. Selecting an individual Gerber
+  loads companion files from its folder. Drag-and-drop is also supported.
+- Standard Gerber naming is detected by Gerbonara, including `.gtl/.gbl`,
+  `.gts/.gbs`, `.gto/.gbo`, `.gko` and KiCad layer names. Unrecognized naming needs
+  standard filenames; there is no manual layer mapping UI yet. Review **Import
+  details** for parser warnings and recognized source files.
+- A closed board outline is required. Outline cutouts and Excellon through holes
+  and routed slots are subtracted from the material layers. Open outlines are
+  rejected. Blind/buried via depths, plated barrels, edge plating, components,
+  solder paste and fabrication drawings are not modeled.
+- Standard soldermask Gerbers represent **openings**, so mask material is their
+  complement within the board. Material-positive mask files must be inverted
+  upstream. Legacy `%IPNEG*%` files are rejected; use a modern RS-274X export.
+- Curves are polygonized with **0.01 mm chord tolerance**. STEP contains valid
+  extruded B-rep solids with faceted curves, not analytic cylindrical holes.
+  This is a geometric reconstruction, not recovery of a manufacturer's stackup.
+
+The assembly has one named, coloured component per material layer or dielectric
+section. Disconnected copper islands remain separate solids inside that layer's
+compound. Export validates each solid and writes through a temporary file so a
+failed CAD operation does not replace an existing destination file.
+
+## Validation
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+Tests cover Gerber polarity and aperture holes, arcs, outline cutouts, drills,
+ZIP and companion-file loading, stack heights, optional layers, multilayer
+ordering, Qt controls and asynchronous import. STEP is reopened through
+OpenCascade and checked for solid validity, dimensions, names and volume.
+Fixtures are synthetic; production fabrication sets still need comparison with
+their original board designs.
+
+`scripts/create_demo.py` regenerates the demonstration fabrication files.
+`scripts/capture_preview.py` renders the actual Qt window to `output/` for visual
+inspection. Windows offscreen rendering explicitly loads system Arial because
+that backend does not enumerate system fonts automatically.
+
+Core libraries: [Gerbonara](https://gerbolyze.gitlab.io/gerbonara/),
+[CadQuery](https://cadquery.readthedocs.io/en/stable/), PyQt6, QtAwesome, Shapely
+and NumPy. The layered PCB logo is an editable SVG in `gerberstep/assets/`.

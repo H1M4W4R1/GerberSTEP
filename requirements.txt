@@ -1,0 +1,7 @@
+# Tested direct dependency versions; install with Python 3.12 (64-bit).
+PyQt6==6.11.0
+qtawesome==1.4.2
+gerbonara==1.6.3
+shapely==2.2.0
+cadquery==2.8.0
+numpy==2.5.4
