@@ -62,6 +62,32 @@ def test_inner_stack_order_and_dielectric_total():
     assert len(parts) == 7
 
 
+def test_individual_stack_thicknesses_and_export(tmp_path):
+    import cadquery as cq
+    outline = box(0, 0, 10, 10)
+    board = Board("four", outline, [Layer(side, "copper", side, outline)
+                                   for side in ("top", "inner1", "inner2", "bottom")])
+    config = Settings(thicknesses={"Dielectric_1": 0.2, "Dielectric_2": 0.8,
+                                  "Dielectric_3": 0.4, "inner2": 0.035,
+                                  "inner1": 0.07, "top": 0.05, "bottom": 0.025})
+    parts = stack_components(board, config)
+    by_name = {p.name: p for p in parts}
+    assert by_name["inner2"].z == pytest.approx(0.2)
+    assert by_name["inner1"].z == pytest.approx(1.035)
+    assert by_name["top"].z == pytest.approx(1.505)
+    assert by_name["bottom"].z == pytest.approx(-0.025)
+    path = tmp_path / "custom-stack.step"
+    export_step(parts, path, add_monolith=False)
+    solid = cq.importers.importStep(str(path)).val()
+    assert solid.isValid()
+    assert solid.BoundingBox().zlen == pytest.approx(1.58)
+    assert sum(s.Volume() for s in solid.Solids()) == pytest.approx(158)
+    config.enabled["Dielectric_2"] = False
+    remaining = {p.name: p for p in stack_components(board, config)}
+    assert "Dielectric_2" not in remaining
+    assert remaining["top"].z == by_name["top"].z
+
+
 def gerber(body, apertures="%ADD10C,0.1*%"):
     return GerberFile.from_string("%FSLAX46Y46*%\n%MOMM*%\n" + apertures + "\nD10*\nG01*\n" + body + "\nM02*")
 

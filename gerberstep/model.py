@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import math
 
 from shapely.geometry.base import BaseGeometry
 
@@ -79,23 +80,34 @@ def stack_components(board: Board, settings: Settings) -> list[Component]:
         key=lambda layer: int(layer.side[5:]), reverse=True,
     )
     gap = settings.dielectric / (len(inner) + 1)
+    def layer_thickness(name, default):
+        value = settings.thicknesses.get(name, default)
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{name}: thickness must be positive and finite.")
+        return value
+
     parts = []
     z = 0.0
     for index in range(len(inner) + 1):
-        parts.append(Component(f"Dielectric_{index + 1}", "dielectric", board.outline, z, gap))
-        z += gap
+        name = f"Dielectric_{index + 1}"
+        depth = layer_thickness(name, gap)
+        parts.append(Component(name, "dielectric", board.outline, z, depth))
+        z += depth
         if index < len(inner):
             layer = inner[index]
-            parts.append(Component(layer.name, "copper", layer.geometry, z, settings.copper))
-            z += settings.copper
+            depth = layer_thickness(layer.name, settings.copper)
+            parts.append(Component(layer.name, "copper", layer.geometry, z, depth))
+            z += depth
     for layer in copper:
         if layer.side in ("top", "bottom"):
+            depth = layer_thickness(layer.name, settings.copper)
             parts.append(Component(layer.name, "copper", layer.geometry,
-                                   z if layer.side == "top" else -settings.copper, settings.copper))
+                                   z if layer.side == "top" else -depth, depth))
     for side in ("top", "bottom"):
-        has_copper = any(layer.side == side for layer in copper)
+        foil = next((layer for layer in copper if layer.side == side), None)
         base = z if side == "top" else 0.0
-        cursor = base + (settings.copper if side == "top" else -settings.copper) if has_copper else base
+        depth = layer_thickness(foil.name, settings.copper) if foil else 0
+        cursor = base + (depth if side == "top" else -depth)
         for kind in ("mask", "silk"):
             for layer in board.layers:
                 if layer.side != side or layer.kind != kind or not settings.enabled.get(layer.name, True):
@@ -115,4 +127,5 @@ def stack_components(board: Board, settings: Settings) -> list[Component]:
         part.circles = board.outline_circles + layer_circles.get(part.name, ())
         part.tolerance = board.tolerance
     return [part for part in parts if not part.geometry.is_empty
-            and settings.enabled.get("dielectric" if part.kind == "dielectric" else part.name, True)]
+            and settings.enabled.get(part.name, True)
+            and (part.kind != "dielectric" or settings.enabled.get("dielectric", True))]

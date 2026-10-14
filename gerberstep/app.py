@@ -165,18 +165,6 @@ class MainWindow(QMainWindow):
         intro.setWordWrap(True)
         sidebar.addWidget(intro)
 
-        card = QFrame()
-        card.setObjectName("card")
-        settings_layout = QVBoxLayout(card)
-        settings_layout.setContentsMargins(16, 16, 16, 16)
-        settings_layout.setSpacing(12)
-        self.copper = self.add_thickness(settings_layout, "Copper · all foils", 0.1, [0.050, 0.075, 0.100])
-        self.dielectric = self.add_thickness(settings_layout, "Dielectric · total", 1.6, [1.2, 1.5, 1.6])
-        note = label("Choose included materials in the layer list.\nInternal foils divide the substrate equally.", "muted")
-        note.setWordWrap(True)
-        settings_layout.addWidget(note)
-        sidebar.addWidget(card)
-
         sidebar.addWidget(label("LAYERS", "section"))
         self.layer_area = QScrollArea()
         self.layer_area.setWidgetResizable(True)
@@ -286,23 +274,6 @@ class MainWindow(QMainWindow):
         action.setShortcut(QKeySequence.StandardKey.Open)
         action.triggered.connect(self.choose_file)
         self.addAction(action)
-        for widget in (self.copper, self.dielectric):
-            widget.valueChanged.connect(self.refresh)
-
-    def add_thickness(self, layout, title, value, presets):
-        row = QHBoxLayout()
-        row.addWidget(label(title))
-        field = spin(value)
-        row.addWidget(field)
-        layout.addLayout(row)
-        buttons = QHBoxLayout()
-        for preset in presets:
-            item = button(f"{preset:.3f}" if preset < 1 else f"{preset:.1f}")
-            item.setToolTip(f"Set {title.lower()} to {preset} mm")
-            item.clicked.connect(lambda checked=False, v=preset: field.setValue(v))
-            buttons.addWidget(item)
-        layout.addLayout(buttons)
-        return field
 
     def choose_file(self):
         if self.task:
@@ -388,7 +359,6 @@ class MainWindow(QMainWindow):
 
     def board_loaded(self, result, preserve=False):
         previous = {name: (check.isChecked(), thickness.value()) for name, (check, thickness) in self.optional.items()} if preserve else {}
-        previous_checks = {name: check.isChecked() for name, check in self.layer_checks.items()} if preserve else {}
         previous_name = self.board.name if preserve and self.board else None
         self.board, cache = result
         if previous_name is not None:
@@ -403,35 +373,34 @@ class MainWindow(QMainWindow):
             if item.widget():
                 item.widget().hide()
                 item.widget().deleteLater()
-        self.settings = Settings(copper=self.copper.value(), dielectric=self.dielectric.value())
-        dielectric_check = QCheckBox("Dielectric · all sections")
-        dielectric_check.setChecked(previous_checks.get("dielectric", True))
-        dielectric_check.setMinimumHeight(38)
-        dielectric_check.toggled.connect(self.refresh)
-        self.layer_checks["dielectric"] = dielectric_check
-        self.layer_layout.addWidget(dielectric_check)
-        for layer in sorted(self.board.layers, key=lambda p: (p.side != "top", p.side, p.kind)):
+        self.settings = Settings()
+        defaults = stack_components(self.board, self.settings)
+        dielectrics = [part for part in defaults if part.kind == "dielectric"]
+        if dielectrics:
+            # Keep the default total at 1.6 mm after spin-box rounding.
+            dielectrics[-1].thickness = self.settings.dielectric - sum(
+                round(part.thickness, 3) for part in dielectrics[:-1])
+        sources = {layer.name: layer.source for layer in self.board.layers}
+        self.layer_layout.addWidget(label("TOP TO BOTTOM - thickness per layer", "muted"))
+        # Match the physical stack, including every dielectric gap.
+        for part in sorted(defaults, key=lambda part: part.z, reverse=True):
             row = QWidget()
             row.setFixedHeight(46)
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 4, 0, 4)
-            check = QCheckBox(layer.name.replace("_", " "))
-            check.setChecked(previous_checks.get(layer.name, True))
-            check.setToolTip(layer.source)
+            check = QCheckBox(part.name.replace("_", " "))
+            enabled, value = previous.get(part.name, (True, part.thickness))
+            check.setChecked(enabled)
+            check.setToolTip(sources.get(part.name, "Insulating section; numbered from bottom to top."))
             row_layout.addWidget(check, 1)
-            self.layer_checks[layer.name] = check
-            if layer.kind == "copper":
-                row_layout.addWidget(label("Copper", "muted"))
-            else:
-                enabled, value = previous.get(layer.name, (True, 0.1))
-                check.setChecked(enabled)
-                thickness = spin(value)
-                thickness.setEnabled(enabled)
-                thickness.setMaximumWidth(120)
-                row_layout.addWidget(thickness)
-                self.optional[layer.name] = check, thickness
-                check.toggled.connect(thickness.setEnabled)
-                thickness.valueChanged.connect(self.refresh)
+            self.layer_checks[part.name] = check
+            thickness = spin(value)
+            thickness.setEnabled(enabled)
+            thickness.setMaximumWidth(120)
+            row_layout.addWidget(thickness)
+            self.optional[part.name] = check, thickness
+            check.toggled.connect(thickness.setEnabled)
+            thickness.valueChanged.connect(self.refresh)
             check.toggled.connect(self.refresh)
             self.layer_layout.addWidget(row)
         self.layer_layout.addStretch()
@@ -450,8 +419,6 @@ class MainWindow(QMainWindow):
                                else "Preview and export: coatings stacked.")
         if not self.board:
             return
-        self.settings.copper = self.copper.value()
-        self.settings.dielectric = self.dielectric.value()
         self.settings.coplanar = self.coplanar.isChecked()
         self.settings.enabled = {name: check.isChecked() for name, check in self.layer_checks.items()}
         for name, (check, thickness) in self.optional.items():

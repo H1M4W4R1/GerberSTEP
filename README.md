@@ -34,14 +34,18 @@ The UI uses Qt's native window system; a functioning desktop session is required
 
 | Material | Default | Controls |
 | --- | --- | --- |
-| Copper | 0.100 mm per foil | Numeric input; 0.050 / 0.075 / 0.100 mm presets; individual layer checkboxes |
-| Dielectric | 1.600 mm total | Numeric input; 1.2 / 1.5 / 1.6 mm presets; checkbox for all sections |
+| Copper | 0.100 mm per foil | Thickness input and checkbox beside each foil |
+| Dielectric | 1.600 mm total initially | Separate thickness input and checkbox for each insulating section |
 | Soldermask | 0.100 mm per layer | Individual top/bottom checkbox and thickness |
 | Silkscreen | 0.100 mm per layer | Individual top/bottom checkbox and thickness |
 
 Dielectric thickness means **total insulating material**, excluding all copper.
-For multilayer boards, equal dielectric sections separate internal foils in
-numeric layer order. A two-sided board with the defaults has a 2.2 mm overall
+The layer list runs from top to bottom, with copper and dielectric controls beside
+their layers. For multilayer boards, dielectric sections initially share 1.600 mm
+(rounded to 0.001 mm); each section can then have a different thickness.
+Dielectric sections are numbered from bottom to top. Changes update the preview
+and STEP stack heights and survive precision rebuilds.
+A two-sided board with the defaults has a 2.2 mm overall
 stack: 1.6 mm substrate plus 0.1 mm each for two copper, two mask and two silk
 layers. Missing surface files do not create artificial layers.
 
