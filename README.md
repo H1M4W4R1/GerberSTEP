@@ -136,9 +136,17 @@ window waits for that job before allowing closure.
   `.gts/.gbs`, `.gto/.gbo`, `.gko` and KiCad layer names. Unrecognized naming needs
   standard filenames; there is no manual layer mapping UI yet. Review **Import
   details** for parser warnings and recognized source files.
-- A closed board outline is required. Outline cutouts and Excellon through holes
-  and routed slots are subtracted from the material layers. Open outlines are
-  rejected. Blind/buried via depths, plated barrels, edge plating, components,
+- Outline recovery bridges uniquely paired open endpoints up to **0.05 mm** apart,
+  independently of curve precision. Intersections and duplicate edges are resolved
+  into closed contours. If no closed contour exists, overlapping edge strokes are
+  snapped within the smallest outline aperture width (at most **0.5 mm**), accepted
+  only when all lines form closed contours. This supports slightly misaligned
+  EasyEDA outline strokes. Remaining open lines are ignored only when a closed board
+  boundary exists; **Import details** reports repairs and ignored lines. Review the
+  preview before export: open cutouts can be missing. Larger gaps with no closed
+  boundary still require a corrected outline Gerber. Closed outline cutouts and
+  Excellon through holes and routed slots are subtracted from the material layers.
+  Blind/buried via depths, plated barrels, edge plating, components,
   solder paste and fabrication drawings are not modeled.
 - Standard soldermask Gerbers represent **openings**, so mask material is their
   complement within the board. Material-positive mask files must be inverted

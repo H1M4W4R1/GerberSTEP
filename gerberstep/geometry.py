@@ -8,13 +8,14 @@ from pathlib import Path
 from gerbonara import LayerStack
 from gerbonara import graphic_primitives as gp
 from gerbonara.utils import MM, approximate_arc
-from shapely import make_valid, set_precision
-from shapely.geometry import GeometryCollection, LineString, Point, Polygon
+from shapely import make_valid, set_precision, snap
+from shapely.geometry import GeometryCollection, LineString, MultiPoint, Point, Polygon
 from shapely.ops import polygonize_full, unary_union
 
 from .model import Board, DrillHole, Layer
 
 TOLERANCE = 0.01  # maximum curve chord error in mm
+OUTLINE_GAP = 0.05  # mm; independent of preview curve precision
 
 
 def polygons(geometry):
@@ -115,13 +116,71 @@ def circular_boundaries(cam, *, outline=False):
     return tuple(sorted(c for c in circles if c[2] > 0))
 
 
+def outline_faces(segments, stroke_width=0):
+    """Node intersections, then bridge only uniquely paired loose endpoints."""
+    linework = unary_union([set_precision(segment, 0.00001) for segment in segments])
+    faces, cuts, dangles, invalid = polygonize_full(linework)
+    if cuts.is_empty and dangles.is_empty and invalid.is_empty:
+        return faces, cuts, dangles, invalid
+
+    lines = list(linework.geoms) if hasattr(linework, "geoms") else [linework]
+    degree = {}
+    for line in lines:
+        if line.is_empty:
+            continue
+        for point in (line.coords[0], line.coords[-1]):
+            degree[point] = degree.get(point, 0) + 1
+    endpoints = [point for point, count in degree.items() if count == 1]
+    # Spatial bins keep fragmented outlines from requiring all-pairs searches.
+    bins = {}
+    for i, (x, y) in enumerate(endpoints):
+        bins.setdefault((math.floor(x / OUTLINE_GAP), math.floor(y / OUTLINE_GAP)), []).append(i)
+    neighbors = []
+    for point in endpoints:
+        bx, by = (math.floor(value / OUTLINE_GAP) for value in point)
+        neighbors.append([j for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+                          for j in bins.get((bx + dx, by + dy), [])
+                          if 0 < math.dist(point, endpoints[j]) <= OUTLINE_GAP])
+    bridges = [LineString([endpoints[i], endpoints[js[0]]])
+               for i, js in enumerate(neighbors)
+               if len(js) == 1 and js[0] > i and neighbors[js[0]] == [i]]
+    if bridges:
+        repaired = unary_union([linework, *bridges])
+        recovered = polygonize_full(repaired)
+        # Do not retain bridges that fail to contribute to any closed face.
+        boundaries = unary_union([face.boundary for face in recovered[0].geoms])
+        bridges = [bridge for bridge in bridges if boundaries.covers(bridge)]
+        if bridges:
+            faces, cuts, dangles, invalid = polygonize_full(unary_union([linework, *bridges]))
+            warnings.warn(f"Board outline repaired: bridged {len(bridges)} gap(s) up to "
+                          f"{OUTLINE_GAP:g} mm. Verify the outline before export.", stacklevel=2)
+    if faces.is_empty and stroke_width > 0:
+        # Some exporters draw overlapping, slightly offset edge strokes. Their
+        # ink touches, but their centerlines do not. Snap to source vertices,
+        # including vertices near segment interiors, without offsetting the board
+        # by buffering the stroke. Cap repair distance even for wide apertures.
+        distance = min(stroke_width, 0.5)
+        reference = MultiPoint([point for line in lines for point in line.coords])
+        repaired = unary_union([snap(line, reference, distance) for line in lines])
+        recovered = polygonize_full(repaired)
+        if not recovered[0].is_empty and all(part.is_empty for part in recovered[1:]):
+            faces, cuts, dangles, invalid = recovered
+            warnings.warn("Board outline repaired by snapping overlapping edge strokes "
+                          f"within {distance:g} mm (limited by the outline aperture width). "
+                          "Verify the outline dimensions and cutouts before export.", stacklevel=2)
+    return faces, cuts, dangles, invalid
+
+
 def board_outline(cam, tolerance=TOLERANCE):
     segments, regions = [], []
+    stroke_widths = []
     for obj in cam.objects:
         for primitive in obj.to_primitives(MM):
             if isinstance(primitive, gp.Line):
+                stroke_widths.append(primitive.width)
                 segments.append(LineString([(primitive.x1, primitive.y1), (primitive.x2, primitive.y2)]))
             elif isinstance(primitive, gp.Arc):
+                stroke_widths.append(primitive.width)
                 points = list(approximate_arc(primitive.cx, primitive.cy, primitive.x1,
                               primitive.y1, primitive.x2, primitive.y2, primitive.clockwise,
                               max_error=tolerance))
@@ -129,11 +188,12 @@ def board_outline(cam, tolerance=TOLERANCE):
             else:
                 regions.append(primitive_geometry(primitive, tolerance))
     outline = GeometryCollection()
+    unused_length = 0
     if segments:
-        faces, cuts, dangles, invalid = polygonize_full(unary_union([
-            set_precision(segment, 0.00001) for segment in segments]))
-        if not cuts.is_empty or not dangles.is_empty or not invalid.is_empty:
-            raise ValueError("Board outline has open or intersecting contours. Export a closed Edge.Cuts/outline layer.")
+        # Region outlines already provide boundaries; do not reshape their lines.
+        width = min(stroke_widths) if stroke_widths and not regions else 0
+        faces, cuts, dangles, invalid = outline_faces(segments, width)
+        unused_length = cuts.length + dangles.length + invalid.length
         # Polygonize returns nested faces; XOR their exterior rings preserves cutouts.
         rings = {Polygon(face.exterior).wkb: Polygon(face.exterior) for face in faces.geoms}
         for ring in rings.values():
@@ -142,7 +202,14 @@ def board_outline(cam, tolerance=TOLERANCE):
         outline = outline.symmetric_difference(region)
     outline = clean(outline)
     if outline.is_empty:
-        raise ValueError("No closed board outline found. Include a board outline Gerber.")
+        raise ValueError("No closed board outline found: contours are open or degenerate. "
+                         f"Repair of small gaps (up to {OUTLINE_GAP:g} mm) and overlapping "
+                         "edge strokes could not recover a boundary. "
+                         "Export a closed Edge.Cuts/outline layer.")
+    if unused_length:
+        warnings.warn(f"Board outline recovered from closed contours; ignored {unused_length:g} mm "
+                      "of open or unused outline lines. Open cutouts may be missing. "
+                      "Verify the outline and cutouts before export.", stacklevel=2)
     return outline
 
 
@@ -176,6 +243,8 @@ def load_board(path: str, progress=lambda message: None, *, tolerance=TOLERANCE)
         layers = []
         notes = []
         for (side, kind), cam in stack.graphic_layers.items():
+            # Gerbonara's EasyEDA rules use inner_1; the stack model uses inner1.
+            side = re.sub(r"^inner_(\d+)$", r"inner\1", side)
             if kind not in ("copper", "mask", "silk"):
                 if kind != "outline":
                     notes.append(f"Excluded {side} {kind}: not a board material layer.")
