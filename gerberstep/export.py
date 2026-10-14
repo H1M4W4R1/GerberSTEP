@@ -93,8 +93,7 @@ def build_assembly(components, progress=lambda message: None, *, add_monolith=Tr
         monolith = monolith.clean()
         if not monolith.isValid() or len(monolith.Solids()) != 1:
             raise ValueError("Copper and dielectric do not form one connected solid. "
-                             "Disable 'Add manufacturing monolith' to export separate layers, "
-                             "or supply one connected board.")
+                             "Supply one connected board with adjoining copper and dielectric layers.")
         assembly.add(monolith.Solids()[0], name="Manufacturing_Monolith", color=cq.Color(0.55, 0.65, 0.78))
     return assembly
 

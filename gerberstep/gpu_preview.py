@@ -51,7 +51,16 @@ class GPUPreview(GLViewWidget):
                                   drawEdges=False, glOptions="opaque")
                 self.addItem(item)
                 self.mesh_items[part.name] = key, item
+                item.material_color = part.color
+                item.material_light = light
                 self.mesh_builds += 1
+            if item.material_color != part.color:
+                color = QColor(part.color)
+                colors = np.ones((len(item.material_light), 4), dtype=np.float32)
+                colors[:, :3] = item.material_light[:, None]*[color.redF(), color.greenF(), color.blueF()]
+                item.opts["meshdata"].setFaceColors(colors)
+                item.meshDataChanged()
+                item.material_color = part.color
             # The original unit-height vertex buffers survive thickness and
             # exploded-view changes. Only the model matrix changes.
             item.resetTransform()

@@ -9,16 +9,17 @@ os.environ.setdefault("QT_API", "pyqt6")
 
 import qtawesome as qta
 from PyQt6.QtCore import QLocale, QThread, Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QIcon, QKeySequence
+from PyQt6.QtGui import QAction, QActionGroup, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFrame,
     QHBoxLayout, QLabel, QLayout, QMainWindow, QMessageBox, QProgressBar, QPushButton,
-    QInputDialog, QScrollArea, QSplitter, QVBoxLayout, QWidget,
+    QInputDialog, QMenu, QScrollArea, QSplitter, QVBoxLayout, QWidget,
 )
 
 from .export import export_step
 from .geometry import load_board
-from .model import COLORS, Settings, stack_components
+from .model import COLORS, MASK_COLORS, SILK_COLORS, FINISH_COLORS, Settings, stack_components
+from .stackups import STACKUPS
 from .preview import BoardPreview, mesh_template
 
 ASSETS = Path(__file__).parent / "assets"
@@ -105,7 +106,7 @@ def button(text, icon=None, primary=False):
 def spin(value):
     widget = QDoubleSpinBox()
     widget.setLocale(QLocale.c())
-    widget.setDecimals(3)
+    widget.setDecimals(4)
     widget.setRange(0.001, 20.0)
     widget.setSingleStep(0.025)
     widget.setSuffix(" mm")
@@ -165,6 +166,20 @@ class MainWindow(QMainWindow):
         intro.setWordWrap(True)
         sidebar.addWidget(intro)
 
+        self.appearance = {"mask": "Green", "silk": "White", "copper": "Bare copper"}
+        self.stackup = QComboBox()
+        self.stackup.setAccessibleName("JLCPCB stackup")
+        self.stackup.addItem("Open a board for JLCPCB presets", None)
+        self.stackup.setEnabled(False)
+        self.apply_stackup_button = button("", "fa5s.sync-alt")
+        self.apply_stackup_button.setFixedSize(36, 36)
+        self.apply_stackup_button.setStyleSheet("padding: 5px;")
+        self.apply_stackup_button.setAccessibleName("Apply JLCPCB thicknesses")
+        self.apply_stackup_button.setToolTip("Apply thicknesses from the selected JLCPCB stackup")
+        self.apply_stackup_button.setEnabled(False)
+        self.apply_stackup_button.clicked.connect(self.apply_stackup)
+        self.stackup.setToolTip("Matches imported copper layers. Applies copper and dielectric only; coating thicknesses remain editable. 2L values are nominal estimates; 4L values use published dimensions.")
+
         sidebar.addWidget(label("LAYERS", "section"))
         self.layer_area = QScrollArea()
         self.layer_area.setWidgetResizable(True)
@@ -177,20 +192,26 @@ class MainWindow(QMainWindow):
         self.layer_layout.addStretch()
         self.layer_area.setWidget(self.layer_container)
         sidebar.addWidget(self.layer_area, 1)
-        self.coplanar = button("Align coatings with copper", "fa5s.layer-group")
+        stackup_row = QHBoxLayout()
+        self.stackup.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.stackup.setMinimumContentsLength(18)
+        stackup_row.addWidget(self.stackup, 1)
+        stackup_row.addWidget(self.apply_stackup_button)
+        sidebar.addLayout(stackup_row)
+        self.coplanar = button("", "fa5s.layer-group")
+        self.coplanar.setFixedSize(48, 48)
+        self.coplanar.setAccessibleName("Align coatings with copper")
         self.coplanar.setCheckable(True)
         self.coplanar.setToolTip("Export only: place soldermask and silkscreen at the outer copper base height. The preview keeps the normal stacked layout.")
         self.coplanar.toggled.connect(self.refresh)
-        sidebar.addWidget(self.coplanar)
-        self.mode_note = label("Stacked: mask and silk sit above copper.", "muted")
-        self.mode_note.setWordWrap(True)
-        sidebar.addWidget(self.mode_note)
         self.export_button = button("Export STEP assembly", "fa5s.cube", True)
         self.export_button.setMinimumHeight(48)
         self.export_button.setEnabled(False)
         self.export_button.clicked.connect(self.choose_export)
-        sidebar.addWidget(self.export_button)
-        sidebar.addWidget(label("Separate, named solids · millimetres", "muted"))
+        export_row = QHBoxLayout()
+        export_row.addWidget(self.coplanar)
+        export_row.addWidget(self.export_button, 1)
+        sidebar.addLayout(export_row)
         split.addWidget(self.controls)
 
         preview_panel = QWidget()
@@ -231,34 +252,64 @@ class MainWindow(QMainWindow):
         toolbar.addStretch()
         fit = button("Fit", "fa5s.expand")
         toolbar.addWidget(fit)
+        self.notes = button("", "fa5s.info-circle")
+        self.notes.setFixedSize(36, 36)
+        self.notes.setStyleSheet("padding: 5px;")
+        self.notes.setToolTip("Import details")
+        self.notes.setAccessibleName("Import details")
+        self.notes.setEnabled(False)
+        self.notes.clicked.connect(self.show_notes)
+        toolbar.addWidget(self.notes)
         preview_layout.addLayout(toolbar)
         self.preview = BoardPreview()
         fit.clicked.connect(self.preview.fit)
         preview_layout.addWidget(self.preview, 1)
         legend = QHBoxLayout()
+        self.legend_labels = {}
+        self.appearance_menus = {}
+        choices_by_kind = {"copper": FINISH_COLORS, "mask": MASK_COLORS, "silk": SILK_COLORS}
         for kind, name in [("copper", "Copper"), ("dielectric", "Dielectric"), ("mask", "Soldermask"), ("silk", "Silkscreen")]:
-            legend.addWidget(label(f'<span style="color:{COLORS[kind]}">●</span>  {name}'))
+            if kind in choices_by_kind:
+                entry = QPushButton()
+                entry.setCursor(Qt.CursorShape.PointingHandCursor)
+                entry.setAccessibleName(f"{name} appearance")
+                entry.setToolTip("Choose board finish" if kind == "copper" else f"Choose {name.lower()} color")
+                menu = QMenu(entry)
+                group = QActionGroup(menu)
+                group.setExclusive(True)
+                for option in choices_by_kind[kind]:
+                    action = menu.addAction(option)
+                    action.setCheckable(True)
+                    action.setChecked(option == self.appearance[kind])
+                    group.addAction(action)
+                    action.triggered.connect(lambda checked, k=kind, value=option: self.set_appearance(k, value))
+                entry.setMenu(menu)
+                self.appearance_menus[kind] = menu
+            else:
+                entry = QLabel()
+            self.legend_labels[kind] = (entry, name)
+            legend.addWidget(entry)
+        self.update_legend()
         legend.addStretch()
-        preview_layout.addLayout(legend)
-        self.notes = button("Import details", "fa5s.info-circle")
-        self.notes.setEnabled(False)
-        self.notes.clicked.connect(self.show_notes)
-        export_options = QHBoxLayout()
-        export_options.addWidget(self.notes)
-        export_options.addStretch()
-        export_options.addWidget(label("Curve precision"))
-        self.precision = QComboBox()
+        self.precision = QPushButton()
+        self.precision.setAccessibleName("Curve precision")
+        self.precision.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.precision.setStyleSheet("QPushButton { border: none; padding: 3px 12px 3px 0; background: transparent; color: #8da5c1; } QPushButton::menu-indicator { width: 8px; }")
+        self.precision.setToolTip("Maximum curve chord error. Changes rebuild the loaded board; supported STEP arcs and round drill holes remain exact.")
+        self.precision_menu = QMenu(self.precision)
+        precision_group = QActionGroup(self.precision_menu)
+        precision_group.setExclusive(True)
         for name, tolerance in [("Low · 0.10 mm", 0.1), ("Medium · 0.05 mm", 0.05), ("High · 0.01 mm", 0.01)]:
-            self.precision.addItem(name, tolerance)
-        self.precision.setCurrentIndex(1)
-        self.precision.setToolTip("Maximum curve chord error. STEP restores supported source arcs and exact round drill holes. Other curves remain faceted. Changes rebuild the loaded board.")
-        self.precision.currentIndexChanged.connect(self.precision_changed)
-        export_options.addWidget(self.precision)
-        preview_layout.addLayout(export_options)
-        self.monolith = QCheckBox("Add manufacturing monolith (copper + dielectric)")
-        self.monolith.setChecked(True)
-        self.monolith.setToolTip("Adds one fused body named Manufacturing_Monolith to the STEP file. In Fusion, select that body and hide the original layers. Coatings remain separate.")
-        preview_layout.addWidget(self.monolith)
+            action = self.precision_menu.addAction(name)
+            action.setData(tolerance)
+            action.setCheckable(True)
+            precision_group.addAction(action)
+            action.triggered.connect(lambda checked, value=tolerance: self.set_precision(value))
+        self.precision.setMenu(self.precision_menu)
+        self.precision_value = 0.05
+        self.set_precision(0.05, rebuild=False)
+        legend.addWidget(self.precision)
+        preview_layout.addLayout(legend)
         split.addWidget(preview_panel)
         split.setSizes([350, 900])
         split.setChildrenCollapsible(False)
@@ -309,10 +360,11 @@ class MainWindow(QMainWindow):
         if self.task:
             return
         self.controls.setEnabled(False)
+        for control in (self.stackup, *(self.legend_labels[k][0] for k in self.appearance)):
+            control.setEnabled(False)
         self.open_button.setEnabled(False)
         self.folder_button.setEnabled(False)
         self.precision.setEnabled(False)
-        self.monolith.setEnabled(False)
         self.rename_button.setEnabled(False)
         self.progress.setRange(0, 0)
         self.progress.show()
@@ -328,25 +380,32 @@ class MainWindow(QMainWindow):
         if task:
             task.deleteLater()
         self.controls.setEnabled(True)
+        for control in (self.legend_labels[k][0] for k in self.appearance):
+            control.setEnabled(True)
+        self.stackup.setEnabled(self.stackup.currentData() is not None)
         self.open_button.setEnabled(True)
         self.folder_button.setEnabled(True)
         self.precision.setEnabled(True)
-        self.monolith.setEnabled(self.monolith_available())
         self.rename_button.setEnabled(self.board is not None)
         if self.board is not None:
             # On a failed rebuild, the controls must still describe the retained board.
-            self.precision.blockSignals(True)
-            self.precision.setCurrentIndex(self.precision.findData(self.board.tolerance))
-            self.precision.blockSignals(False)
+            self.set_precision(self.board.tolerance, rebuild=False)
         self.export_button.setEnabled(bool(self.export_components))
         self.progress.hide()
 
-    def precision_changed(self):
-        if self.board is not None and self.board.source_path and self.task is None:
+    def set_precision(self, tolerance, *, rebuild=True):
+        changed = self.precision_value != tolerance
+        self.precision_value = tolerance
+        for action in self.precision_menu.actions():
+            selected = action.data() == tolerance
+            action.setChecked(selected)
+            if selected:
+                self.precision.setText(f"Precision: {action.text()}")
+        if rebuild and changed and self.board is not None and self.board.source_path and self.task is None:
             self.open_path(self.board.source_path, preserve=True)
 
     def open_path(self, path, preserve=False):
-        tolerance = self.precision.currentData()
+        tolerance = self.precision_value
         def load(progress):
             board = load_board(path, progress, tolerance=tolerance)
             progress("Preparing preview surfaces…")
@@ -358,14 +417,13 @@ class MainWindow(QMainWindow):
         self.run_task(load, lambda result: self.board_loaded(result, preserve=preserve))
 
     def board_loaded(self, result, preserve=False):
+        previous_stackup = self.stackup.currentData() if preserve else None
         previous = {name: (check.isChecked(), thickness.value()) for name, (check, thickness) in self.optional.items()} if preserve else {}
         previous_name = self.board.name if preserve and self.board else None
         self.board, cache = result
         if previous_name is not None:
             self.board.name = previous_name
-        self.precision.blockSignals(True)
-        self.precision.setCurrentIndex(self.precision.findData(self.board.tolerance))
-        self.precision.blockSignals(False)
+        self.set_precision(self.board.tolerance, rebuild=False)
         self.optional.clear()
         self.layer_checks.clear()
         while self.layer_layout.count():
@@ -374,12 +432,28 @@ class MainWindow(QMainWindow):
                 item.widget().hide()
                 item.widget().deleteLater()
         self.settings = Settings()
+        self.stackup.clear()
+        for preset in STACKUPS:
+            if preset.matches(self.board):
+                self.stackup.addItem(preset.name, preset)
+        available = self.stackup.count() > 0
+        if not available:
+            self.stackup.addItem("No matching JLCPCB preset — use manual values", None)
+        self.stackup.setEnabled(available)
+        self.apply_stackup_button.setEnabled(available)
+        nominal_default = self.stackup.findText("JLCPCB 2L · 1.6 mm (nominal)")
+        if nominal_default >= 0:
+            self.stackup.setCurrentIndex(nominal_default)
+        if previous_stackup is not None:
+            index = self.stackup.findData(previous_stackup)
+            if index >= 0:
+                self.stackup.setCurrentIndex(index)
         defaults = stack_components(self.board, self.settings)
         dielectrics = [part for part in defaults if part.kind == "dielectric"]
         if dielectrics:
             # Keep the default total at 1.6 mm after spin-box rounding.
             dielectrics[-1].thickness = self.settings.dielectric - sum(
-                round(part.thickness, 3) for part in dielectrics[:-1])
+                round(part.thickness, 4) for part in dielectrics[:-1])
         sources = {layer.name: layer.source for layer in self.board.layers}
         self.layer_layout.addWidget(label("TOP TO BOTTOM - thickness per layer", "muted"))
         # Match the physical stack, including every dielectric gap.
@@ -400,7 +474,7 @@ class MainWindow(QMainWindow):
             row_layout.addWidget(thickness)
             self.optional[part.name] = check, thickness
             check.toggled.connect(thickness.setEnabled)
-            thickness.valueChanged.connect(self.refresh)
+            thickness.valueChanged.connect(self.thickness_changed)
             check.toggled.connect(self.refresh)
             self.layer_layout.addWidget(row)
         self.layer_layout.addStretch()
@@ -414,11 +488,47 @@ class MainWindow(QMainWindow):
             self.preview.fit()
         self.statusBar().showMessage(f"Loaded {len(self.board.layers)} material layers · Review Import details before export")
 
+    def set_appearance(self, kind, value):
+        self.appearance[kind] = value
+        self.update_legend()
+        self.refresh()
+
+    def update_legend(self):
+        colors = dict(COLORS, mask=MASK_COLORS[self.appearance["mask"]],
+                      silk=SILK_COLORS[self.appearance["silk"]],
+                      copper=FINISH_COLORS[self.appearance["copper"]])
+        for kind, (entry, name) in self.legend_labels.items():
+            if kind in self.appearance:
+                entry.setText(f"●  {name}")
+                entry.setStyleSheet(f"QPushButton {{ color: {colors[kind]}; border: none; padding: 3px 12px 3px 0; background: transparent; }} QPushButton::menu-indicator {{ width: 8px; }}")
+            else:
+                entry.setText(f'<span style="color:{colors[kind]}">●</span>  {name}')
+
+    def thickness_changed(self, *_):
+        self.refresh()
+
+    def apply_stackup(self):
+        preset = self.stackup.currentData()
+        if self.board is None or preset is None:
+            return
+        for name, value in preset.thicknesses(self.board).items():
+            if name in self.optional:
+                control = self.optional[name][1]
+                control.blockSignals(True)
+                control.setValue(value)
+                control.blockSignals(False)
+        self.refresh()
+        self.statusBar().showMessage(f"Applied {preset.name}; copper and dielectric updated. Coatings unchanged.")
+
     def refresh(self, *_):
-        self.mode_note.setText("Export: coatings aligned. Preview stays stacked." if self.coplanar.isChecked()
-                               else "Preview and export: coatings stacked.")
+        self.coplanar.setToolTip("Coating alignment on: exported coatings align with copper. Preview stays stacked."
+                                if self.coplanar.isChecked() else
+                                "Coating alignment off: coatings stay stacked. Click to align exported coatings with copper.")
         if not self.board:
             return
+        self.settings.mask_color = MASK_COLORS[self.appearance["mask"]]
+        self.settings.silk_color = SILK_COLORS[self.appearance["silk"]]
+        self.settings.finish = self.appearance["copper"]
         self.settings.coplanar = self.coplanar.isChecked()
         self.settings.enabled = {name: check.isChecked() for name, check in self.layer_checks.items()}
         for name, (check, thickness) in self.optional.items():
@@ -427,9 +537,6 @@ class MainWindow(QMainWindow):
         self.components = stack_components(self.board, replace(self.settings, coplanar=False))
         self.export_components = stack_components(self.board, self.settings)
         self.export_button.setEnabled(bool(self.export_components) and self.task is None)
-        self.monolith.setEnabled(self.monolith_available() and self.task is None)
-        self.monolith.setToolTip("Adds one fused copper/dielectric body to the STEP file." if self.monolith_available()
-                                else "Monolith omitted: select both copper and dielectric to enable it.")
         self.preview.set_components(self.components)
         self.preview.has_board = True
         x0, y0, x1, y1 = self.board.outline.bounds
@@ -459,12 +566,11 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             path = dialog.selectedFiles()[0]
             parts = list(self.export_components)
-            add_monolith = self.monolith.isChecked() and self.monolith_available()
-            self.run_task(lambda progress: export_step(parts, path, progress, add_monolith=add_monolith), self.export_done)
+            self.run_task(lambda progress: export_step(parts, path, progress, add_monolith=True), self.export_done)
 
     def export_done(self, path):
         self.statusBar().showMessage(f"STEP exported · {path}")
-        extra = "\nAdded Manufacturing_Monolith: select this body and hide the original layers for machining." if self.monolith.isChecked() and self.monolith_available() else ""
+        extra = "\nAdded Manufacturing_Monolith: select this body and hide the original layers for machining." if self.monolith_available() else ""
         QMessageBox.information(self, "STEP assembly exported", f"Saved {len(self.export_components)} layer components.{extra}\n\n{path}")
 
     def show_notes(self):

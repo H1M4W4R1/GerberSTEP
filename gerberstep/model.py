@@ -8,6 +8,10 @@ COLORS = {
     "copper": "#db9959", "dielectric": "#465570",
     "mask": "#178e77", "silk": "#e4eefc",
 }
+MASK_COLORS = {"Green": COLORS["mask"], "Red": "#b52632", "Blue": "#2457ac",
+               "Black": "#25282c", "White": "#eeeeea", "Yellow": "#dcc034", "Purple": "#713fa0"}
+SILK_COLORS = {"White": COLORS["silk"], "Black": "#202125"}
+FINISH_COLORS = {"Bare copper": COLORS["copper"], "HASL": "#c4c9ce", "ENIG": "#d9b653"}
 
 
 @dataclass
@@ -48,6 +52,9 @@ class Settings:
     thicknesses: dict[str, float] = field(default_factory=dict)
     enabled: dict[str, bool] = field(default_factory=dict)
     coplanar: bool = False
+    mask_color: str = COLORS["mask"]
+    silk_color: str = COLORS["silk"]
+    finish: str = "Bare copper"
 
 
 @dataclass
@@ -60,10 +67,11 @@ class Component:
     drill_holes: list[DrillHole] = field(default_factory=list)
     circles: tuple[tuple[float, float, float], ...] = ()
     tolerance: float = 0.01
+    color_override: str | None = None
 
     @property
     def color(self):
-        return COLORS[self.kind]
+        return self.color_override or COLORS[self.kind]
 
 
 def stack_components(board: Board, settings: Settings) -> list[Component]:
@@ -122,7 +130,14 @@ def stack_components(board: Board, settings: Settings) -> list[Component]:
                     cursor += thickness if side == "top" else -thickness
                 parts.append(Component(layer.name, kind, layer.geometry, start, thickness))
     layer_circles = {layer.name: layer.circles for layer in board.layers}
+    outer_names = {layer.name for layer in copper if layer.side in ("top", "bottom")}
     for part in parts:
+        if part.kind == "mask":
+            part.color_override = settings.mask_color
+        elif part.kind == "silk":
+            part.color_override = settings.silk_color
+        elif part.name in outer_names:
+            part.color_override = FINISH_COLORS[settings.finish]
         part.drill_holes = board.drill_holes
         part.circles = board.outline_circles + layer_circles.get(part.name, ())
         part.tolerance = board.tolerance

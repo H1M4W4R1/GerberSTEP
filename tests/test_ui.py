@@ -31,7 +31,7 @@ def test_async_import_controls_and_preview(app, monkeypatch):
     assert window.task is None
     assert window.export_button.isEnabled()
     assert len(window.components) == 7
-    assert window.monolith.isChecked()
+    assert window.monolith_available()
     assert window.board.tolerance == 0.05
     monkeypatch.setattr("gerberstep.app.QInputDialog.getText", lambda *args, **kwargs: ("My export.step", True))
     window.rename_button.click()
@@ -47,7 +47,7 @@ def test_async_import_controls_and_preview(app, monkeypatch):
     assert top_mask.z == pytest.approx(1.65)
     assert next(p for p in window.export_components if p.name == "Top_Soldermask").z == 1.6
     window.optional["Bottom_Soldermask"][1].setValue(0.075)
-    window.precision.setCurrentIndex(0)
+    window.precision_menu.actions()[0].trigger()
     deadline = time.monotonic()+30
     while window.task is not None and time.monotonic() < deadline:
         app.processEvents()
@@ -70,7 +70,7 @@ def test_async_import_controls_and_preview(app, monkeypatch):
         check.setChecked(name == "Top_Silkscreen")
     assert [p.name for p in window.export_components] == ["Top_Silkscreen"]
     assert window.export_button.isEnabled()
-    assert not window.monolith.isEnabled()
+    assert not window.monolith_available()
     assert window.layer_layout.contentsMargins().right() >= 12
     window.layer_checks["Top_Silkscreen"].setChecked(False)
     assert not window.export_components
@@ -100,4 +100,42 @@ def test_individual_dielectric_controls_survive_rebuild(app):
     assert parts["top"].z == pytest.approx(1.535)
     assert window.optional["Dielectric_2"][1].value() == 0.8
     assert not window.optional["Dielectric_2"][1].isEnabled()
+    window.close()
+
+
+def test_stackup_and_appearance_controls(app):
+    from tests.test_stackups import board_with_layers
+    from gerberstep.model import MASK_COLORS, FINISH_COLORS
+
+    board = board_with_layers(4)
+    window = MainWindow()
+    window.board_loaded((board, {}))
+    from PyQt6.QtCore import QTimer, Qt
+    from PyQt6.QtTest import QTest
+    window.show()
+    app.processEvents()
+    for kind, menu in window.appearance_menus.items():
+        visible = []
+        menu.aboutToShow.connect(lambda: visible.append(True))
+        QTimer.singleShot(50, menu.close)
+        QTest.mouseClick(window.legend_labels[kind][0], Qt.MouseButton.LeftButton)
+        app.processEvents()
+        assert visible
+    for kind, value in [("mask", "Blue"), ("silk", "Black"), ("copper", "ENIG")]:
+        action = next(a for a in window.appearance_menus[kind].actions() if a.text() == value)
+        action.trigger()
+        assert action.isChecked()
+    window.layer_checks["inner1"].setChecked(False)
+    window.apply_stackup_button.click()
+    assert window.optional["inner1"][1].value() == 0.0152
+    assert window.optional["Dielectric_1"][1].value() == 0.2104
+    assert not window.layer_checks["inner1"].isChecked()
+    assert window.optional["Mask"][1].value() == 0.1
+    window.board_loaded((board, {}), preserve=True)
+    parts = {p.name: p for p in window.export_components}
+    assert parts["Mask"].color == MASK_COLORS["Blue"]
+    assert parts["top"].color == FINISH_COLORS["ENIG"]
+    assert parts["Dielectric_1"].thickness == 0.2104
+    window.board_loaded((board_with_layers(6), {}))
+    assert not window.apply_stackup_button.isEnabled()
     window.close()

@@ -30,6 +30,12 @@ def test_mesh_survives_camera_thickness_and_explode_changes():
     assert view.mesh_builds == 1
     assert view.mesh_items["copper"][1] is item
     assert item.opts["meshdata"] is mesh
+    old_colors = mesh.faceColors(indexed="faces").copy()
+    part.color_override = "#123456"
+    view.set_scene([part], templates, np.array([5, 5, 0]), 10, True)
+    assert view.mesh_builds == 1
+    assert view.mesh_items["copper"][1] is item
+    assert not np.array_equal(old_colors, mesh.faceColors(indexed="faces"))
     assert abs(item.transform().map(np.array([0., 0., 1.]))[2] - 2.075) < 1e-5
     view.set_scene([], templates, np.zeros(3), 10, False)
     assert not view.mesh_items

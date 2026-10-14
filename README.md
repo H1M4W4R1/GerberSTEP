@@ -11,7 +11,7 @@ assembly with separate copper, dielectric, soldermask and silkscreen components.
 Double-click **launch.bat**. The local `.venv` already contains the dependencies.
 
 1. Choose **Open folder** and select `examples/demo` to try the included board.
-2. Adjust thicknesses or disable individual soldermask/silkscreen layers.
+2. Choose colors and finish; apply a compatible JLCPCB preset or edit layer thicknesses.
 3. Choose **Export STEP assembly**.
 
 You can also run `.venv\Scripts\python.exe main.py examples\demo` from this folder.
@@ -42,12 +42,34 @@ The UI uses Qt's native window system; a functioning desktop session is required
 Dielectric thickness means **total insulating material**, excluding all copper.
 The layer list runs from top to bottom, with copper and dielectric controls beside
 their layers. For multilayer boards, dielectric sections initially share 1.600 mm
-(rounded to 0.001 mm); each section can then have a different thickness.
+(rounded to 0.0001 mm); each section can then have a different thickness.
 Dielectric sections are numbered from bottom to top. Changes update the preview
 and STEP stack heights and survive precision rebuilds.
 A two-sided board with the defaults has a 2.2 mm overall
 stack: 1.6 mm substrate plus 0.1 mm each for two copper, two mask and two silk
 layers. Missing surface files do not create artificial layers.
+
+Left-click **Soldermask** or **Silkscreen** in the legend to choose colors for both
+sides in the 2D/3D preview and STEP assembly. Left-click **Copper** for the board
+finish menu, offering bare copper, silver HASL,
+and gold ENIG. Finish colors the entire outer copper component; internal copper
+stays copper-colored. This is an appearance approximation, without additional
+plating geometry or thickness. The manufacturing monolith retains its own color.
+
+Select a compatible **JLCPCB** preset and press its adjacent refresh icon to
+fill all copper and dielectric inputs at once. Layer visibility and coating
+thicknesses stay unchanged, and every value remains editable. Preset selection
+alone does not change thicknesses. Values and appearance survive precision rebuilds.
+
+Included presets are nominal two-layer boards (0.4–2.0 mm, 35 µm outer copper)
+and four-layer JLC04161H-7628, -3313, -1080 and -2116 stacks, using
+[JLCPCB's published stackup dimensions](https://jlcpcb.com/impedance)
+(checked October 14, 2026). Two-layer dielectric thickness is estimated as nominal
+thickness minus both copper foils. Four-layer dimensions retain the published
+values, including 15.2 µm inner copper; their sums can differ from nominal 1.6 mm.
+Coatings add to the displayed height. Presets match imported copper layers,
+including hidden ones; other layer counts use manual values. No stackup is
+inferred from Gerber artwork, and this is not JLCPCB's complete catalog.
 
 Use the pencil to the left of the board name to edit the suggested STEP filename.
 ZIP imports use the ZIP filename, without its extension. Renaming does not change
@@ -96,7 +118,7 @@ enabled layers, coating alignment and camera position are preserved. Larger chor
 errors visibly facet small holes and pads in the preview; unresolved curves also
 remain faceted in export. Choose the tolerance your job permits.
 
-**Add manufacturing monolith** is enabled by default. Export adds an extra component
+Export automatically adds an extra component
 named `Manufacturing_Monolith`, containing one Boolean-fused copper/dielectric solid.
 It retains copper trace relief, outline cutouts and drill holes. Mask and silk are
 excluded. The original material components remain in the same STEP assembly.
@@ -108,12 +130,12 @@ In Fusion's Drill operation, select a cylindrical hole wall on this body and use
 **Select Same Diameter** as needed. Files exported before analytic drill support
 must be re-exported and imported again; increasing precision alone does not turn
 their flat hole faces into cylinders.
-Disable the checkbox to export only the original components. Disconnected boards
+Disconnected boards
 or unconnected stacks cannot form one monolith; the app reports an error rather than
 silently exporting a multi-solid compound as a monolith. Fusion adds export time,
 particularly at High precision.
-If the selection does not contain both copper and dielectric, the monolith option
-is disabled and no monolith is exported. It never restores layers you disabled.
+If the selection does not contain both copper and dielectric, no monolith is
+exported. It never restores layers you disabled.
 
 ## Preview
 
@@ -165,7 +187,7 @@ The assembly has one named, coloured component per material layer or dielectric
 section. Disconnected copper islands remain separate solids inside that layer's
 compound. Export validates each solid and writes through a temporary file so a
 failed CAD operation does not replace an existing destination file.
-When enabled, the manufacturing monolith is an additional fused component.
+The manufacturing monolith is an additional fused component when copper and dielectric are selected.
 
 ## Validation
 
