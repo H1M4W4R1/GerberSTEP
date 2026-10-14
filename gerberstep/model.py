@@ -31,6 +31,7 @@ class DrillHole:
     x: float
     y: float
     radius: float
+    plated: bool | None = None
 
 
 @dataclass
@@ -55,6 +56,8 @@ class Settings:
     mask_color: str = COLORS["mask"]
     silk_color: str = COLORS["silk"]
     finish: str = "Bare copper"
+    ems: bool = False
+    plating: float = 0.025
 
 
 @dataclass
@@ -68,6 +71,8 @@ class Component:
     circles: tuple[tuple[float, float, float], ...] = ()
     tolerance: float = 0.01
     color_override: str | None = None
+    separate_bodies: bool = False
+    members: tuple["Component", ...] = ()
 
     @property
     def color(self):
@@ -80,6 +85,9 @@ def stack_components(board: Board, settings: Settings) -> list[Component]:
     Each internal foil adds its thickness to the finished stack. Optional layers
     grow outward on either side; coplanar mode shares the outer copper base Z.
     """
+    if settings.ems:
+        from .ems import ems_components
+        return ems_components(board, settings)
     if settings.copper <= 0 or settings.dielectric <= 0:
         raise ValueError("Copper and dielectric thickness must be positive.")
     copper = [layer for layer in board.layers if layer.kind == "copper"]

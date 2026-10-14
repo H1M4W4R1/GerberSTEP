@@ -198,6 +198,18 @@ class MainWindow(QMainWindow):
         stackup_row.addWidget(self.stackup, 1)
         stackup_row.addWidget(self.apply_stackup_button)
         sidebar.addLayout(stackup_row)
+        plating_row = QHBoxLayout()
+        plating_row.addWidget(label("EMS barrel plating (mm)", "muted"))
+        self.plating = QDoubleSpinBox()
+        self.plating.setDecimals(3)
+        self.plating.setRange(0.001, 0.250)
+        self.plating.setSingleStep(0.005)
+        self.plating.setValue(self.settings.plating)
+        self.plating.setToolTip("Copper wall thickness outside the finished round PTH drill. EMS assumes through holes; slots and blind/buried vias are unsupported.")
+        self.plating.setEnabled(False)
+        self.plating.valueChanged.connect(self.refresh)
+        plating_row.addWidget(self.plating)
+        sidebar.addLayout(plating_row)
         self.coplanar = button("", "fa5s.layer-group")
         self.coplanar.setFixedSize(48, 48)
         self.coplanar.setAccessibleName("Align coatings with copper")
@@ -236,7 +248,8 @@ class MainWindow(QMainWindow):
         preview_layout.addWidget(self.board_info)
         toolbar = QHBoxLayout()
         self.view_mode = QComboBox()
-        self.view_mode.addItems(["3D", "2D"])
+        self.view_mode.addItems(["3D", "2D", "EMS"])
+        self.view_mode.setToolTip("EMS: separate copper bodies and plated through-hole barrels for simulation geometry; exports without a manufacturing monolith.")
         self.view_mode.setAccessibleName("Preview mode")
         self.view_mode.currentTextChanged.connect(self.change_view)
         toolbar.addWidget(self.view_mode)
@@ -448,7 +461,7 @@ class MainWindow(QMainWindow):
             index = self.stackup.findData(previous_stackup)
             if index >= 0:
                 self.stackup.setCurrentIndex(index)
-        defaults = stack_components(self.board, self.settings)
+        defaults = stack_components(self.board, replace(self.settings, ems=False))
         dielectrics = [part for part in defaults if part.kind == "dielectric"]
         if dielectrics:
             # Keep the default total at 1.6 mm after spin-box rounding.
@@ -521,6 +534,10 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Applied {preset.name}; copper and dielectric updated. Coatings unchanged.")
 
     def refresh(self, *_):
+        self.settings.ems = self.view_mode.currentText() == "EMS"
+        self.settings.plating = self.plating.value()
+        self.plating.setEnabled(self.settings.ems)
+        self.coplanar.setEnabled(not self.settings.ems)
         self.coplanar.setToolTip("Coating alignment on: exported coatings align with copper. Preview stays stacked."
                                 if self.coplanar.isChecked() else
                                 "Coating alignment off: coatings stay stacked. Click to align exported coatings with copper.")
@@ -535,25 +552,27 @@ class MainWindow(QMainWindow):
             self.settings.enabled[name] = check.isChecked()
             self.settings.thicknesses[name] = thickness.value()
         self.components = stack_components(self.board, replace(self.settings, coplanar=False))
-        self.export_components = stack_components(self.board, self.settings)
+        self.export_components = self.components if self.settings.ems else stack_components(self.board, self.settings)
         self.export_button.setEnabled(bool(self.export_components) and self.task is None)
         self.preview.set_components(self.components)
         self.preview.has_board = True
         x0, y0, x1, y1 = self.board.outline.bounds
         height = (max(p.z+p.thickness for p in self.components)-min(p.z for p in self.components)) if self.components else 0
-        self.board_info.setText(f"{x1-x0:.2f} × {y1-y0:.2f} mm  ·  {height:.3f} mm stack  ·  {len(self.components)} layers  ·  {self.board.tolerance:g} mm precision")
+        units = "bodies" if self.settings.ems else "layers"
+        self.board_info.setText(f"{x1-x0:.2f} × {y1-y0:.2f} mm  ·  {height:.3f} mm stack  ·  {len(self.components)} {units}  ·  {self.board.tolerance:g} mm precision")
 
     def change_view(self, *_):
-        self.preview.mode = self.view_mode.currentText()
+        self.preview.mode = "2D" if self.view_mode.currentText() == "2D" else "3D"
         self.preview.bottom = self.side.currentText() == "Bottom"
         self.preview.exploded = self.explode.isChecked()
         self.side.setEnabled(self.preview.mode == "2D")
         self.explode.setEnabled(self.preview.mode == "3D")
+        self.refresh()
         self.preview.sync_view()
         self.preview.update()
 
     def monolith_available(self):
-        return {"copper", "dielectric"}.issubset({part.kind for part in self.export_components})
+        return not self.settings.ems and {"copper", "dielectric"}.issubset({part.kind for part in self.export_components})
 
     def choose_export(self):
         if not self.board or self.task or not self.export_components:
@@ -571,7 +590,8 @@ class MainWindow(QMainWindow):
     def export_done(self, path):
         self.statusBar().showMessage(f"STEP exported · {path}")
         extra = "\nAdded Manufacturing_Monolith: select this body and hide the original layers for machining." if self.monolith_available() else ""
-        QMessageBox.information(self, "STEP assembly exported", f"Saved {len(self.export_components)} layer components.{extra}\n\n{path}")
+        units = "EMS components" if self.settings.ems else "layer components"
+        QMessageBox.information(self, "STEP assembly exported", f"Saved {len(self.export_components)} {units}.{extra}\n\n{path}")
 
     def show_notes(self):
         if self.board:

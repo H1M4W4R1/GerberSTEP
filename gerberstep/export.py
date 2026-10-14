@@ -9,6 +9,8 @@ from .curves import CircularWires
 
 def component_solids(part):
     """Use source arcs when they preserve valid, separate material regions."""
+    if part.members:
+        return material_solids(part)
     import cadquery as cq
     from shapely.geometry import box
     from shapely.strtree import STRtree
@@ -52,6 +54,36 @@ def component_solids(part):
     return solids
 
 
+def material_solids(part):
+    """Return drilled material, fusing connected copper into one real solid."""
+    import cadquery as cq
+
+    if part.members:
+        solids = [s for member in part.members for s in material_solids(member)]
+        fused = solids[0].fuse(*solids[1:]).clean() if len(solids) > 1 else solids[0]
+        if not fused.isValid() or (part.kind == "copper" and len(fused.Solids()) != 1):
+            raise ValueError(f"{part.name}: material did not form valid solids.")
+        return fused.Solids()
+    solids = component_solids(part)
+    if solids and part.drill_holes:
+        # Preview holes are inscribed polygons. Cutting the exact source
+        # cylinders removes the remaining facets without filling artwork
+        # gaps, slots, overlapping drills or holes crossing the board edge.
+        xmin, ymin, xmax, ymax = part.geometry.bounds
+        cutters = [cq.Solid.makeCylinder(
+            hole.radius, part.thickness + 2,
+            cq.Vector(hole.x, hole.y, part.z - 1))
+            for hole in part.drill_holes
+            if hole.x + hole.radius > xmin and hole.x - hole.radius < xmax
+            and hole.y + hole.radius > ymin and hole.y - hole.radius < ymax]
+        if cutters:
+            drilled = cq.Compound.makeCompound(solids).cut(*cutters).clean()
+            if not drilled.isValid():
+                raise ValueError(f"Invalid drilled solid in {part.name}.")
+            solids = drilled.Solids()
+    return solids
+
+
 def build_assembly(components, progress=lambda message: None, *, add_monolith=True):
     import cadquery as cq
 
@@ -59,30 +91,21 @@ def build_assembly(components, progress=lambda message: None, *, add_monolith=Tr
     if not components:
         raise ValueError("Select at least one non-empty layer to export.")
     manufacturing_solids = []
+    if any(part.separate_bodies for part in components):
+        add_monolith = False
     for index, part in enumerate(components):
         progress(f"Creating solid {index+1}/{len(components)} · {part.name}")
-        solids = component_solids(part)
-        if solids and part.drill_holes:
-            # Preview holes are inscribed polygons. Cutting the exact source
-            # cylinders removes the remaining facets without filling artwork
-            # gaps, slots, overlapping drills or holes crossing the board edge.
-            xmin, ymin, xmax, ymax = part.geometry.bounds
-            cutters = [cq.Solid.makeCylinder(
-                hole.radius, part.thickness + 2,
-                cq.Vector(hole.x, hole.y, part.z - 1))
-                for hole in part.drill_holes
-                if hole.x + hole.radius > xmin and hole.x - hole.radius < xmax
-                and hole.y + hole.radius > ymin and hole.y - hole.radius < ymax]
-            if cutters:
-                drilled = cq.Compound.makeCompound(solids).cut(*cutters).clean()
-                if not drilled.isValid():
-                    raise ValueError(f"Invalid drilled solid in {part.name}.")
-                solids = drilled.Solids()
+        solids = material_solids(part)
         if part.kind in ("copper", "dielectric"):
             manufacturing_solids.extend(solids)
         if solids:
             rgb = tuple(int(part.color[i:i+2], 16)/255 for i in (1, 3, 5))
-            assembly.add(cq.Compound.makeCompound(solids), name=part.name, color=cq.Color(*rgb))
+            if part.separate_bodies:
+                for body_index, solid in enumerate(solids, 1):
+                    name = part.name if len(solids) == 1 else f"{part.name}_{body_index:04d}"
+                    assembly.add(solid, name=name, color=cq.Color(*rgb))
+            else:
+                assembly.add(cq.Compound.makeCompound(solids), name=part.name, color=cq.Color(*rgb))
     if add_monolith and {"copper", "dielectric"}.issubset({p.kind for p in components}):
         progress("Fusing copper and dielectric into the manufacturing monolith…")
         if not manufacturing_solids:

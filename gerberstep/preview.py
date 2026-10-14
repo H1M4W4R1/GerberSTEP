@@ -25,6 +25,18 @@ def mesh_template(geometry):
     return np.array(triangles, dtype=float).reshape((-1, 3, 3))
 
 
+def component_mesh(part):
+    """Normalize a connected body's constituent volumes to its full Z extent."""
+    if not part.members:
+        return mesh_template(part.geometry)
+    meshes = []
+    for member in part.members:
+        mesh = component_mesh(member)
+        mesh[:, :, 2] = (mesh[:, :, 2]*member.thickness + member.z-part.z)/part.thickness
+        meshes.append(mesh)
+    return np.concatenate(meshes)
+
+
 def rasterize(triangles, colors, width, height):
     """Orthographic depth buffer: per-pixel depth avoids intersecting-face artifacts."""
     pixels = np.zeros((height, width, 4), dtype=np.uint8)
@@ -84,6 +96,11 @@ class BoardPreview(QWidget):
         if cache is not None:
             self.cache = cache
             self.paths.clear()
+        # Generated modes create geometry after import. Both renderers need
+        # templates for that geometry, not only the import worker's templates.
+        active = {id(part.geometry) for part in parts}
+        self.cache = {key: mesh for key, mesh in self.cache.items() if key in active}
+        self.paths = {key: path for key, path in self.paths.items() if key in active}
         if parts:
             bounds = np.array([p.geometry.bounds for p in parts])
             lo, hi = bounds[:, :2].min(axis=0), bounds[:, 2:].max(axis=0)
@@ -91,6 +108,8 @@ class BoardPreview(QWidget):
             self.span = max(*(hi-lo), 1)
             for part in parts:
                 key = id(part.geometry)
+                if key not in self.cache:
+                    self.cache[key] = component_mesh(part)
                 if key not in self.paths:
                     path = QPainterPath()
                     path.setFillRule(Qt.FillRule.OddEvenFill)

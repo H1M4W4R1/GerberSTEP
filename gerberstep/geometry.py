@@ -235,13 +235,16 @@ def load_board(path: str, progress=lambda message: None, *, tolerance=TOLERANCE)
         holes = unary_union([layer_geometry(drill, tolerance) for drill in drill_layers])
         # Preserve source circles independently of the polygonized preview.
         # Routed slots remain polygons; never infer drills from artwork/cutouts.
-        drill_holes = [DrillHole(p.x, p.y, p.r)
+        drill_holes = [DrillHole(p.x, p.y, p.r, obj.plated)
                        for drill in drill_layers for obj in drill.objects
                        for p in obj.to_primitives(MM)
                        if isinstance(p, gp.Circle) and p.polarity_dark and p.r > 0]
         substrate = clean(outline.difference(holes))
         layers = []
         notes = []
+        if any(h.plated is None for h in drill_holes):
+            notes.append("EMS: holes with unknown plating are left unplated; supply explicit PTH/NPTH drill metadata.")
+        notes.append("EMS assumes round plated drills are finished through holes. Blind/buried vias and plated slots are not modeled; plating thickness is user supplied.")
         for (side, kind), cam in stack.graphic_layers.items():
             # Gerbonara's EasyEDA rules use inner_1; the stack model uses inner1.
             side = re.sub(r"^inner_(\d+)$", r"inner\1", side)

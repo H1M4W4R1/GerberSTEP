@@ -66,6 +66,21 @@ def test_async_import_controls_and_preview(app, monkeypatch):
     assert not window.grab().isNull()
     window.view_mode.setCurrentText("3D")
     assert not window.grab().isNull()
+    window.view_mode.setCurrentText("EMS")
+    assert window.preview.mode == "3D"
+    assert window.settings.ems
+    assert window.plating.isEnabled()
+    assert not window.coplanar.isEnabled()
+    assert not window.monolith_available()
+    assert all(p.separate_bodies for p in window.export_components if p.kind == "copper")
+    assert len([p for p in window.components if p.kind == "dielectric"]) == 1
+    assert all(p.kind in ("copper", "dielectric") for p in window.components)
+    window.plating.setValue(0.035)
+    assert window.settings.plating == 0.035
+    assert not window.grab().isNull()
+    window.view_mode.setCurrentText("3D")
+    assert window.monolith_available()
+    assert window.coplanar.isEnabled()
     for name, check in window.layer_checks.items():
         check.setChecked(name == "Top_Silkscreen")
     assert [p.name for p in window.export_components] == ["Top_Silkscreen"]

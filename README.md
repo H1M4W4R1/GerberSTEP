@@ -16,6 +16,30 @@ Double-click **launch.bat**. The local `.venv` already contains the dependencies
 
 You can also run `.venv\Scripts\python.exe main.py examples\demo` from this folder.
 
+## EMS simulation geometry
+
+1. Select **EMS** in the preview mode dropdown.
+2. Set the actual foil/dielectric thicknesses and **EMS barrel plating (mm)** (default 0.025 mm).
+3. Inspect connected copper bodies in the app; optionally export them as STEP solids.
+
+EMS includes copper and dielectric, omits coatings and the manufacturing monolith,
+and fills the spaces between internal foil traces with dielectric. Dielectric is
+one component in the preview and export, with adjoining volumes fused into one
+solid while retaining copper clearances and holes. Round drills
+explicitly marked plated generate hollow copper barrels through the full stack.
+The drill radius is treated as the finished bore radius; plating grows outward,
+with matching clearance in foil and dielectric to avoid overlapping materials.
+Non-plated and unknown-plating holes do not receive barrels. Check **Import details**
+for interpretation warnings. Blind/buried vias and plated slots are not supported.
+
+Copper traces and barrels sharing a material face form one body, including
+connections across multiple vias and internal layers. Disconnected copper remains
+separate. The preview keeps each connected body together in exploded view, and
+STEP fuses its members into one solid. These are geometric bodies, not named
+electrical nets. EMS prepares geometry for future
+OpenEMS integration; it does not yet generate a solver mesh, materials, ports or
+simulation configuration. Use fabrication dimensions rather than display defaults.
+
 ## Fresh installation
 
 Use Python **3.12, 64-bit** (the tested runtime). CadQuery includes a large native
